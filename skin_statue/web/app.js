@@ -1,7 +1,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "/static/vendor/OrbitControls.js";
-import { initResourcePanel } from "/static/resources.js";
+import { initResourcePanel, showPalette } from "/static/resources.js";
 import { createStatue, disposeStatue, createPlacementGuide, disposePlacementGuide } from "/static/statue.js";
+
+import { initEditor } from "/static/editor.js";
 
 const $ = (selector) => document.querySelector(selector);
 const viewport = $("#viewport");
@@ -30,6 +32,7 @@ let generating = false;
 let revision = 0;
 let placementGuide = null;
 let exporting = false;
+let editor = null;
 
 /** 导出按钮始终指向当前已显示的生成快照，参数变化不会暗中重新匹配。 */
 function updateExportButtons() {
@@ -66,7 +69,7 @@ async function exportStatue(bundle) {
 /** 生成按钮依赖有效皮肤和可用调色板。 */
 function updateGenerateButton() {
   const count = (palette?.eligible ?? 0) + ($("#statue-connected").checked ? (palette?.connected_eligible ?? 0) : 0);
-  $("#generate-statue").disabled = !skin || !count || loading || generating;
+  $("#generate-statue").disabled = !skin || !count || loading || generating || editor?.busy;
 }
 
 /** 参数改变后保留上次可看的结果，并明确提示需要重新生成。 */
@@ -82,6 +85,7 @@ function showMode(mode) {
   if (player) player.visible = mode === "skin";
   if (statueMesh) statueMesh.visible = mode === "statue";
   if (placementGuide) placementGuide.visible = mode === "statue" && $("#show-anchor").checked;
+  editor?.setVisible(mode === "statue");
   $("#show-skin").classList.toggle("active", mode === "skin");
   $("#show-statue").classList.toggle("active", mode === "statue");
   if (mode === "statue") {
@@ -107,7 +111,7 @@ function showMode(mode) {
 
 /** 发送当前皮肤和参数，在后台生成后一次性替换雕像预览。 */
 async function generateStatue() {
-  if (!skin || !palette || generating) return;
+  if (!skin || !palette || generating || editor?.busy) return;
   generating = true;
   updateGenerateButton();
   $("#generate-statue").textContent = "正在生成…";
@@ -129,28 +133,9 @@ async function generateStatue() {
     const response = await fetch("/api/statue/generate", { method: "POST", body: form });
     const result = await response.json();
     if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "生成参数无效。");
-    const mesh = await createStatue(result);
-    if (statueMesh) { scene.remove(statueMesh); disposeStatue(statueMesh); }
-    statueMesh = mesh;
-    statueData = result;
-    scene.add(mesh);
-    if (placementGuide) { scene.remove(placementGuide); disposePlacementGuide(placementGuide); }
-    placementGuide = createPlacementGuide(result);
-    scene.add(placementGuide);
-    updateExportButtons();
-    $("#statue-export-hint").textContent = `I 点：局部坐标 ${result.placement.anchor_local.join(", ")}。正面朝南（+Z），I 在东南角。`;
-    updateVisibility();
-    $("#show-statue").disabled = false;
-    $("#statue-state").textContent = revision === startRevision ? "生成完成" : "已显示本次结果；参数已改，请重新生成";
-    $("#statue-report").hidden = false;
-    $("#statue-statistics").textContent = `主体高度 ${result.base_height} 格；实际包围尺寸 ${result.dimensions.join(" × ")} 格\n${result.options.hollow ? "空心" : "实心"} · 方块 ${result.block_count.toLocaleString()} · 第二层 ${result.overlay_blocks.toLocaleString()}\n可见单格面 ${result.mesh.exposed_faces.toLocaleString()} → 合并矩形 ${result.mesh.quad_count.toLocaleString()}\n平均 / 最大 Lab 色差 ${result.matching.mean_color_error} / ${result.matching.max_color_error}；内部填充 ${result.matching.interior_block}`;
-    $("#statue-materials").replaceChildren(...result.materials.map((material) => {
-      const row = document.createElement("div");
-      row.textContent = `${material.key} · ID ${material.numeric_id} · ${material.count.toLocaleString()} 块`;
-      return row;
-    }));
-    showMode("statue");
-    showNotice("");
+    await displayStatue(result);
+    editor.reset(result);
+    if (revision !== startRevision) $("#statue-state").textContent = "已显示本次结果；参数已改，请重新生成";
   } catch (error) {
     $("#statue-state").textContent = "生成失败，保留上次结果";
     showNotice(error.message, true);
@@ -159,6 +144,57 @@ async function generateStatue() {
     $("#generate-statue").textContent = "重新生成雕像预览";
     updateGenerateButton();
   }
+}
+
+/** 原子更新实际雕像网格、材料与导出快照；编辑与工程恢复复用此入口。 */
+async function displayStatue(result) {
+  const mesh = await createStatue(result);
+  if (statueMesh) { scene.remove(statueMesh); disposeStatue(statueMesh); }
+  statueMesh = mesh;
+  statueData = result;
+  scene.add(mesh);
+  if (placementGuide) { scene.remove(placementGuide); disposePlacementGuide(placementGuide); }
+  placementGuide = createPlacementGuide(result);
+  scene.add(placementGuide);
+  updateExportButtons();
+  $("#statue-export-hint").textContent = `I 点：局部坐标 ${result.placement.anchor_local.join(", ")}。正面朝南（+Z），I 在东南角。`;
+  updateVisibility();
+  $("#show-statue").disabled = false;
+  $("#statue-state").textContent = result.edits?.length ? `已编辑 ${result.edits.length} 次` : "生成完成";
+  $("#statue-report").hidden = false;
+  $("#statue-statistics").textContent = `主体高度 ${result.base_height} 格；实际包围尺寸 ${result.dimensions.join(" × ")} 格\n${result.options.hollow ? "空心" : "实心"} · 方块 ${result.block_count.toLocaleString()} · 第二层 ${result.overlay_blocks.toLocaleString()}\n可见单格面 ${result.mesh.exposed_faces.toLocaleString()} → 合并矩形 ${result.mesh.quad_count.toLocaleString()}\n初次生成平均 / 最大 Lab 色差 ${result.matching.mean_color_error} / ${result.matching.max_color_error}；内部填充 ${result.matching.interior_block}`;
+  $("#statue-materials").replaceChildren(...result.materials.map((material) => {
+    const row = document.createElement("div");
+    row.textContent = `${material.display_name ? material.display_name + " · " : ""}${material.key} · ID ${material.numeric_id} · ${material.count.toLocaleString()} 块`;
+    return row;
+  }));
+  showMode("statue");
+  showNotice("");
+}
+
+/** 恢复工程的模型、生成参数、调色板和图层，然后显示已编辑的体素。 */
+async function restoreProject(payload) {
+  const result = payload.statue;
+  modelInputs.forEach((input) => { input.checked = input.value === result.source.model; input.disabled = false; });
+  const blob = await (await fetch(payload.skin)).blob();
+  if (!await importSkin(new File([blob], result.source.filename || "project-skin.png", { type: "image/png" }))) throw new Error("工程皮肤无法打开。");
+  await showPalette({ palette: payload.palette });
+  const settings = result.options;
+  const fields = { scale: "scale", detail: "detail", shell_thickness: "thickness", overlay_offset: "offset", alpha_threshold: "alpha", smoothness: "smoothness" };
+  for (const [key, suffix] of Object.entries(fields)) {
+    const input = $(`#statue-${suffix}`);
+    if (input.tagName === "SELECT" && ![...input.options].some((o) => o.value === String(settings[key]))) input.add(new Option(String(settings[key]), String(settings[key])));
+    input.value = settings[key];
+  }
+  $("#statue-hollow").value = settings.hollow ? "hollow" : "solid";
+  $("#statue-connected").checked = settings.prefer_connected;
+  excludedBlocks = settings.excluded;
+  for (const key of visibility.keys()) visibility.set(key, settings.layers.includes(key));
+  buildLayerControls();
+  window.dispatchEvent(new CustomEvent("project-palette-settings", { detail: settings }));
+  await displayStatue(result);
+  editor.reset(result);
+  updateGenerateButton();
 }
 
 /** 显示解析说明或可以直接处理的错误信息。 */
@@ -334,11 +370,13 @@ async function importSkin(file, preserveLayers = false) {
       controls.autoRotate = false;
       setView("reset");
     }
+    return true;
   } catch (error) {
     if (id !== requestId) return;
     modelInputs.forEach((input) => { input.checked = input.value === (skin?.model ?? "steve"); });
     showNotice(error.message, true);
     status.textContent = skin ? "导入失败，当前皮肤已保留。" : "导入失败，请选择有效的皮肤 PNG。";
+    return false;
   } finally {
     if (id === requestId) {
       loading = false;
@@ -464,9 +502,26 @@ async function loadDemo() {
 
 /** 绑定文件导入、视角、图层和导出等界面交互。 */
 function bindUI() {
+  $("#username-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = $("#import-username");
+    button.disabled = true;
+    button.textContent = "查询中…";
+    const before = requestId;
+    try {
+      const response = await fetch("/api/skin/username", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: $("#java-username").value.trim() }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail);
+      if (before !== requestId) return;
+      modelInputs.forEach((input) => { input.checked = input.value === result.model; input.disabled = false; });
+      const blob = await (await fetch(result.image)).blob();
+      await importSkin(new File([blob], `${result.username}.png`, { type: "image/png" }));
+    } catch (error) { showNotice(error.message, true); }
+    finally { button.disabled = false; button.textContent = "查询皮肤"; }
+  });
   fileInput.addEventListener("change", () => {
     const file = fileInput.files[0];
-    if (file) void importSkin(file);
+    if (file && !editor?.busy) void importSkin(file);
     fileInput.value = "";
   });
   const dropzone = $("#dropzone");
@@ -481,7 +536,7 @@ function bindUI() {
     event.preventDefault();
     dropzone.classList.remove("dragging");
     const file = event.dataTransfer.files[0];
-    if (file) void importSkin(file);
+    if (file && !editor?.busy) void importSkin(file);
   });
   // 阻止皮肤被拖到面板之外时触发浏览器跳转。
   window.addEventListener("dragover", (event) => event.preventDefault());
@@ -536,6 +591,11 @@ function bindUI() {
 try {
   createViewer();
   bindUI();
+  editor = initEditor({
+    canvas: renderer.domElement, camera, scene,
+    state: () => ({ mesh: statueMesh, data: statueData, mode: previewMode, busy: generating || loading }),
+    display: displayStatue, restore: restoreProject, download, notify: showNotice, sync: updateGenerateButton,
+  });
   void loadDemo();
 } catch (error) {
   status.textContent = "无法创建 3D 预览。";

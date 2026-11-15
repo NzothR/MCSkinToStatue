@@ -25,6 +25,17 @@
           <span class="upload-icon">↥</span><strong>选择或拖入皮肤</strong><span>64 × 64 或 64 × 32 · PNG</span>
         </label>
         <div id="file-info" class="file-info">尚未导入皮肤</div>
+        <form id="username-form" class="username-form"><label for="java-username">Java 正版用户名</label><div class="resource-actions"><input id="java-username" autocomplete="off" maxlength="16" pattern="[A-Za-z0-9_]{1,16}" placeholder="输入用户名" required><button id="import-username">查询皮肤</button></div></form>
+        <p class="hint">通过 Mojang 官方服务联网查询，自动识别 Steve / Alex。</p>
+      </section>
+      <section class="project-section">
+        <div class="section-heading"><h2>草稿与工程</h2></div>
+        <button id="save-project" class="primary-button" disabled>↓ 保存工程 .skinproj</button>
+        <label class="import-index">↥ 打开工程<input id="project-file" type="file" accept=".skinproj" hidden></label>
+        <button id="save-draft" class="bundle-button" disabled>保存一份本地草稿</button>
+        <select id="draft-list" aria-label="已保存的草稿"></select>
+        <button id="open-draft" class="bundle-button" disabled>打开所选草稿</button>
+        <p id="project-status" class="hint" role="status">工程保存皮肤、实际方块、编辑记录和候选纹理。草稿手动保存在项目的 drafts 文件夹，重启后仍可打开。</p>
       </section>
       <section>
         <div class="section-heading"><span class="step">02</span><h2>模型设置</h2></div>
@@ -85,6 +96,7 @@
     <section class="preview-panel" aria-label="皮肤三维预览">
       <div class="preview-header"><div><span class="eyebrow">SKIN / STATUE VIEWER</span><h1>每一面，都看清楚。</h1></div><span id="format-badge" class="format-badge">等待皮肤</span></div>
       <div class="preview-mode"><button id="show-skin" class="active">原始皮肤</button><button id="show-statue" disabled>方块雕像</button><label><input id="statue-plain" type="checkbox"> 方块代表色</label><span id="statue-state"></span></div>
+      <div class="preview-stage">
       <div class="viewport" id="viewport">
         <canvas id="viewer" aria-label="可旋转的 Minecraft 皮肤三维模型" tabindex="0"></canvas>
         <div class="view-toolbar" aria-label="固定视角">
@@ -93,6 +105,21 @@
         <div class="scene-label"><span class="scene-dot"></span> 标准站姿 <span class="axis-label">Y ↑</span></div>
         <div class="atlas-card"><div><strong>纹理图集</strong><select id="atlas-kind" aria-label="纹理图集图层"><option value="normalized">完整</option><option value="base">基础</option><option value="overlay">外层</option></select></div><div class="checker"><img id="atlas" alt="64×64 皮肤纹理图集" hidden></div><span>最近邻采样 · 保留像素边界</span></div>
         <div id="loading" class="loading" hidden>正在解析皮肤…</div>
+      </div>
+      <section id="block-editor" class="block-editor" aria-label="方块编辑" hidden>
+        <div class="resources-heading"><h2>方块编辑</h2><div><button id="edit-undo" disabled>撤销</button><button id="edit-redo" disabled>重做</button></div></div>
+        <p id="selection-info" class="hint" role="status">切到方块雕像，单击方块查看名称、ID 和替换候选。拖动仍用于旋转。</p>
+        <div id="edit-tools" hidden>
+          <p class="hint">替换同一注册名及 Metadata 的全部方块。候选按原皮肤目标色排序，分数越低越接近。</p>
+          <div class="candidate-navigation"><button id="candidate-prev">← 上一个候选</button><span id="candidate-index"></span><button id="candidate-next">下一个候选 →</button></div>
+          <div id="candidate-list" class="candidate-list"></div>
+          <div class="candidate-navigation"><button id="candidate-page-prev">上一批</button><span id="candidate-page"></span><button id="candidate-page-next">下一批</button></div>
+          <form id="replacement-form" class="scan-form"><input id="replacement-search" type="search" placeholder="搜索本地化名称、注册名、数字 ID" aria-label="指定替换方块"><button>查找指定方块</button></form>
+          <div id="replacement-list" class="candidate-list"></div>
+          <div class="candidate-navigation"><button id="replacement-prev">上一页</button><span id="replacement-page"></span><button id="replacement-next">下一页</button></div>
+        </div>
+        <p id="edit-status" class="hint" role="status"></p>
+      </section>
       </div>
       <div class="preview-options">
         <label><input type="checkbox" id="grid-visible" checked> 地面网格</label>
@@ -103,6 +130,7 @@
       </div>
       <footer class="statusbar"><span id="status" role="status" aria-live="polite">正在准备预览…</span><span class="mouse-help">左键旋转 · 滚轮缩放 · 右键平移</span></footer>
       <div id="notice" class="notice" role="alert" hidden></div>
+
       <details id="statue-report" class="statue-report" hidden><summary>雕像材料与匹配统计</summary><div id="statue-statistics"></div><div id="statue-materials"></div></details>
       <section class="resources-panel" aria-label="实例方块与调色板">
         <div class="resources-heading"><div><span class="eyebrow">BLOCK RESOURCES</span><h2>实例方块与调色板</h2></div><a id="palette-export" class="download-link" hidden>↓ 导出调色板 JSON</a></div>
@@ -119,7 +147,7 @@
           <div id="palette-list" class="palette-list"></div>
           <div class="palette-pagination"><button id="palette-prev">上一页</button><span id="palette-page"></span><button id="palette-next">下一页</button></div>
         </div>
-        <p class="hint resource-next-step">载入调色板后，在左侧设置尺寸并生成雕像。可以禁用不希望使用的候选方块；本轮提供生成与预览。</p>
+        <p class="hint resource-next-step">载入调色板后，在左侧设置尺寸并生成雕像。单击雕像方块可选择候选、批量替换并保存工程。</p>
       </section>
     </section>
   </main>

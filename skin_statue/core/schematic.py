@@ -194,6 +194,7 @@ def export_bundle(statue: GeneratedStatue, profile: str) -> bytes:
         "block_count": preview["block_count"],
         "options": preview["options"],
         "matching": preview["matching"],
+        "edits": preview.get("edits", []),
         "placement": placement(preview["dimensions"]),
         "materials": materials,
         "validation": "NBT dimensions, block IDs, metadata, registry mappings and anchor read back successfully",

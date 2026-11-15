@@ -114,6 +114,7 @@ class Palette:
                 "registry_name": registry_name,
                 "numeric_id": numeric_id,
                 "metadata": state["metadata"],
+                "display_name": state.get("display_name"),
                 "faces": faces,
                 "eligible": not reasons,
                 "connected_texture": "connected_texture" in reasons,

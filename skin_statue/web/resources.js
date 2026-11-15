@@ -39,7 +39,7 @@ function setBusy(value) {
 }
 
 /** 展示数据来源与启用资源包顺序，帮助核对实际游戏外观。 */
-async function showPalette(payload) {
+export async function showPalette(payload) {
   palette = payload.palette;
   excluded.clear();
   offset = 0;
@@ -76,7 +76,7 @@ function blockCard(entry) {
   card.className = `block-card${entry.eligible || entry.connected_eligible ? "" : " excluded"}`;
   const title = document.createElement("div");
   title.className = "block-name";
-  title.textContent = entry.registry_name;
+  title.textContent = entry.display_name ? `${entry.display_name} · ${entry.registry_name}` : entry.registry_name;
   const meta = document.createElement("div");
   meta.className = "block-meta";
   meta.textContent = `ID ${entry.numeric_id} / Metadata ${entry.metadata} · ${entry.eligible ? "静态候选" : entry.connected_eligible ? "连接纹理候选" : "已排除"}`;
@@ -146,6 +146,12 @@ async function loadPage() {
 
 /** 绑定实例扫描、索引上传、调色板查询及单色匹配。 */
 export function initResourcePanel() {
+  window.addEventListener("project-palette-settings", (event) => {
+    excluded.clear();
+    for (const key of event.detail.excluded) excluded.add(key);
+    offset = 0;
+    void loadPage();
+  });
   window.addEventListener("connected-preference", () => { offset = 0; void loadPage(); });
   requestJSON("/api/resources/loaded").then((result) => {
     if (result.palettes.length === 1 && !palette) return showPalette({ palette: result.palettes[0] });

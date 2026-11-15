@@ -79,6 +79,7 @@ final class ExportJob {
     private JsonObject blockJson;
     private JsonArray states;
     private Set<Integer> creativeMetadata;
+    private Map<Integer, String> creativeNames;
     private int readFramebuffer = -1;
     private final World capturedWorld;
 
@@ -153,6 +154,7 @@ final class ExportJob {
         states = new JsonArray();
         blockJson.add("states", states);
         creativeMetadata = new HashSet<>();
+        creativeNames = new HashMap<>();
         Item item = Item.getItemFromBlock(block);
         if (item != null) {
             List items = new ArrayList();
@@ -163,7 +165,11 @@ final class ExportJob {
                         ItemStack stack = (ItemStack) value;
                         int meta = stack.getItem()
                             .getMetadata(stack.getItemDamage());
-                        if (meta >= 0 && meta < 16) creativeMetadata.add(meta);
+                        if (meta >= 0 && meta < 16) {
+                            creativeMetadata.add(meta);
+                            // Use the real creative stack, including variant damage and NBT names.
+                            creativeNames.putIfAbsent(meta, stack.getDisplayName());
+                        }
                     }
                 }
             } catch (RuntimeException | LinkageError exception) {
@@ -177,6 +183,7 @@ final class ExportJob {
         JsonObject state = new JsonObject();
         state.addProperty("metadata", metadata);
         state.addProperty("creative_confirmed", creativeMetadata.contains(metadata));
+        if (creativeNames.containsKey(metadata)) state.addProperty("display_name", creativeNames.get(metadata));
         JsonObject faces = new JsonObject();
         state.add("faces", faces);
         try {
@@ -459,8 +466,9 @@ final class ExportJob {
         JsonObject root = new JsonObject();
         root.addProperty("format", "skin-statue-block-index");
         root.addProperty("schema_version", 1);
-        root.addProperty("exporter_version", "0.1.1");
+        root.addProperty("exporter_version", "0.1.2");
         root.addProperty("minecraft_version", "1.7.10");
+        root.addProperty("language", Minecraft.getMinecraft().gameSettings.language);
         root.addProperty("capture_scope", "static_getIcon_resolved_atlas");
         root.addProperty("created_at", new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX").format(new Date()));
         JsonArray packsJson = new JsonArray();

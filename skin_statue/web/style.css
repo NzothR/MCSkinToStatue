@@ -150,3 +150,34 @@ h1 { font-size: 22px; font-weight: 450; letter-spacing: 2px; margin: 8px 0 0; }
 @media (max-width: 1000px) { .workspace { grid-template-columns: 260px minmax(0, 1fr); } .sidebar { padding: 8px 18px; } .preview-panel { padding: 24px 18px 18px; } .mouse-help { display: none; } .atlas-card { width: 126px; } .atlas-card .checker { width: 102px; height: 102px; } .atlas-card > span { font-size: 8px; } .view-toolbar button { padding: 7px; } }
 @media (max-width: 700px) { .app-header { height: 68px; padding: 0 18px; } .workspace-tag, .local-badge { display: none; } .workspace { display: flex; flex-direction: column-reverse; } .preview-panel { padding: 20px 14px; } .preview-header { margin-bottom: 16px; } h1 { font-size: 18px; } .viewport { flex: none; height: 520px; min-height: 0; } .view-toolbar { left: 10px; top: 10px; } .view-toolbar button { padding: 6px 7px; } .sidebar { border: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; padding: 0 20px 20px; } .sidebar section { min-width: 0; } .preview-options { gap: 16px; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+/* 编辑器保持纹理像素边缘，并为窄窗口自动折行。 */
+.block-editor { margin-top: 22px; padding: 22px; border: 1px solid #30444b; border-radius: 12px; }
+.block-editor h2 { margin: 0; }
+.candidate-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin: 12px 0; }
+.candidate-card { display: flex; align-items: center; gap: 10px; padding: 10px; text-align: left; overflow-wrap: anywhere; }
+.candidate-card.active { border-color: #83e6bd; background: #29443e; }
+.candidate-card img { width: 42px; height: 42px; flex-shrink: 0; image-rendering: pixelated; }
+.candidate-card small { display: block; margin-top: 4px; color: #96b1b8; }
+.candidate-navigation { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.username-form { margin-top: 18px; font-size: 13px; }
+.username-form input { min-width: 0; width: 100%; }
+.username-form .resource-actions { flex-wrap: nowrap; }
+.project-section .import-index { display: block; margin: 12px 0; text-align: center; }
+.project-section select { margin-top: 12px; width: 100%; }
+#selection-info { white-space: pre-line; overflow-wrap: anywhere; }
+
+.preview-stage { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; height: clamp(560px, 72vh, 900px); flex-shrink: 0; }
+.preview-stage.editing { grid-template-columns: minmax(0, 1fr) 320px; }
+.preview-stage .viewport { min-height: 0; height: 100%; }
+.preview-stage .block-editor { margin-top: 0; overflow-y: auto; padding: 16px; }
+.preview-stage .candidate-list { grid-template-columns: minmax(0, 1fr); }
+.preview-stage .candidate-navigation { gap: 6px; }
+.preview-stage .candidate-navigation button { font-size: 11px; padding: 7px; }
+.preview-stage .scan-form { flex-wrap: wrap; }
+.preview-stage .scan-form input { width: 100%; }
+@media (max-width: 1150px) {
+  .preview-stage { display: flex; flex-direction: column; height: auto; }
+  .preview-stage .viewport { height: 560px; }
+  .preview-stage .block-editor { max-height: 420px; }
+  .preview-stage .candidate-list { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+}

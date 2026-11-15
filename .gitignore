@@ -15,3 +15,5 @@ __pycache__/
 /output/
 /block-exporter/run/
 /block-index-*.zip
+/drafts/
+/*.skinproj

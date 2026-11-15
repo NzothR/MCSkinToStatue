@@ -25,6 +25,8 @@ class GeneratedStatue:
     state_indices: np.ndarray
     states: list[dict]
     normalized_skin: bytes
+    # 每种材料对应的原皮肤颜色签名及频次，用于编辑时重新排列候选。
+    match_targets: dict
 
 
 def exposure(occupied: np.ndarray, axis: int, sign: int) -> np.ndarray:
@@ -129,6 +131,12 @@ def match_surface(occupied, targets, palette, options):
     result[surface] = selected[inverse]
     dominant = int(np.bincount(selected[inverse], minlength=len(candidates)).argmax())
     result[occupied & ~surface] = dominant
+    frequencies = np.bincount(inverse, minlength=len(unique))
+    material_targets = {}
+    for signature, choice, count in zip(unique, selected, frequencies, strict=True):
+        material_targets.setdefault(candidates[int(choice)]["key"], []).append(
+            [signature.tolist(), int(count)]
+        )
     return (
         result,
         candidates,
@@ -138,6 +146,7 @@ def match_surface(occupied, targets, palette, options):
             "max_color_error": round(float(maxima.max()), 3),
             "interior_block": candidates[dominant]["key"],
         },
+        material_targets,
     )
 
 
@@ -294,7 +303,9 @@ def generate_statue(parsed: dict, palette: Palette, options: dict) -> GeneratedS
             paint_faces(targets, occupied, base, owners, box, part, layer, image, options, owner)
     if not occupied.any():
         raise ValueError("没有可生成的皮肤图层，请至少启用一个含像素的图层。")
-    blocks, candidates, report = match_surface(occupied, targets, palette, options)
+    blocks, candidates, report, material_targets = match_surface(
+        occupied, targets, palette, options
+    )
     if options["hollow"]:
         occupied = hollow_base(occupied, base, options["shell_thickness"])
         blocks[~occupied] = -1
@@ -309,6 +320,7 @@ def generate_statue(parsed: dict, palette: Palette, options: dict) -> GeneratedS
             "registry_name": entry["registry_name"],
             "numeric_id": entry["numeric_id"],
             "metadata": entry["metadata"],
+            "display_name": entry.get("display_name"),
             "count": int(counts[i]),
         }
         for i, entry in enumerate(candidates)
@@ -345,4 +357,5 @@ def generate_statue(parsed: dict, palette: Palette, options: dict) -> GeneratedS
         cropped,
         candidates,
         base64.b64decode(parsed["images"]["normalized"].split(",", 1)[1]),
+        material_targets,
     )

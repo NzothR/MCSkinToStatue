@@ -2,7 +2,7 @@
 
 本地运行的 Minecraft Java 版皮肤 3D 预览工具。Python 解析皮肤，Three.js 渲染标准站姿，皮肤数据与预览资源均保留在本机。
 
-当前提供皮肤解析、实例资源扫描、运行时方块索引导入、逐面调色板、可调尺寸的方块雕像生成、双模式 3D 预览和 `.schematic` 结构导出。辅助模组从 GTNH 客户端导出真实注册信息与已加载纹理。
+当前提供皮肤解析、实例资源扫描、运行时方块索引导入、逐面调色板、可调尺寸的方块雕像生成、双模式 3D 预览、点击选材与整类编辑、草稿与工程文件、正版用户名导入和 `.schematic` 结构导出。辅助模组从 GTNH 客户端导出真实注册信息与已加载纹理。
 
 ## 启动
 
@@ -52,6 +52,26 @@ Three.js 0.170.0 和 OrbitControls 已随项目保存，运行时无需访问 CD
 
 该工具展示现代双层皮肤布局，支持为后续面向 MC 1.7.10／GTNH 2.9.0 的雕像生成准备皮肤；原版 MC 1.7.10 的玩家皮肤本身仅使用旧布局。
 
+## 点击编辑、候选切换与工程
+
+切到“方块雕像”后单击方块，选中格显示绿色框，旁边的“方块编辑”（窄窗口位于下方）显示本地化名称、注册名、数字 ID、Metadata 和同类数量。拖动仍旋转视角。拾取根据合并网格交点计算单格坐标，再查询服务端真实体素。
+
+候选用这类方块所覆盖的原皮肤颜色和可见面共同计分，沿用生成时的 Lab 色差、平滑权重和连接纹理偏好。每批 12 个，支持上一批／下一批、点击卡片，以及上一个／下一个候选。一次选择期间排序保持固定。卡片显示纹理和分数，也可以搜索本地化名称、注册名或数字 ID 指定方块。生成时禁用的材料、重力块和其他不适合静态雕像的方块继续排除。
+
+替换范围是整个雕像中同一 `registry_name + metadata` 的全部方块。若目标材料原本已存在，两类会合并；之后的整类替换会同时作用于合并后的材料。使用撤销可恢复前一份完整状态。服务内保留最近 20 份快照，支持撤销／重做；重新生成或打开工程建立新的编辑历史。编辑立即刷新材料数量和纹理网格，`.schematic` 及对照包直接导出当前编辑结果。统计中的色差标明为初次生成结果，对照包额外记录替换操作。
+
+“保存工程”下载 `.skinproj` 文件，内容包括规范化皮肤、Steve／Alex 模型、生成选项与图层、实际体素、替换记录、原皮肤目标色、所有安全候选（含 CTM 候选）及六面原始纹理。打开工程可离线继续编辑、替换、重新生成与导出，无需原索引 ZIP。工程保存当前结果与编辑记录，撤销快照仅在当前服务会话中保留。工程恢复后的“原始皮肤 PNG”是工程内保存的规范化皮肤。
+
+“保存一份本地草稿”把相同工程内容写到项目 `drafts/`，每次独立保存；选择列表后点击“打开所选草稿”。草稿需要手动保存，服务重启后仍存在。草稿和根目录工程文件已从 Git 排除。工程上传上限 128 MB，展开总大小上限 512 MB。
+
+本地化名称来自 0.1.2 索引中真实创造栏 ItemStack 的 `getDisplayName()`，跟随导出时的游戏语言；清单同时记录 `language`。旧索引没有名称字段，会显示注册名、ID 和重新导出提示。请替换辅助模组 JAR，重启游戏后重新运行 `/skinindex export`，再导入新 ZIP、重新生成，获得完整的游戏名称。
+
+## 正版 Java 用户名导入
+
+在“导入皮肤”输入 Java 正版用户名，点击“查询皮肤”。服务端依次查询 Mojang 用户名档案、UUID 会话档案和官方纹理图片，自动按皮肤元数据选择 Steve 或 Alex，再复用 PNG 解析与图层流程。无需登录微软账户。该操作需要联网，其他本地导入、编辑及工程恢复可离线使用。找不到用户名、官方限流、网络失败或账号尚未设置自定义皮肤时，界面显示具体原因并保留已有皮肤。
+
+使用的官方端点为 `https://api.mojang.com/users/profiles/minecraft/{username}`、`https://sessionserver.mojang.com/session/minecraft/profile/{uuid}` 与 `https://textures.minecraft.net/texture/{hash}`。纹理档案结构同时依据构建依赖中的 Mojang Authlib 1.5.21 `YggdrasilMinecraftSessionService` 字节码核对。
+
 ## 导出
 
 | 选项 | 内容 |
@@ -76,7 +96,7 @@ PrismLauncher 的共享 1.7.10 客户端 JAR 会自动定位；其他目录布�
 
 完整 GTNH 方块信息通过辅助模组导出后，在同一面板点击“导入游戏导出的索引 ZIP”。界面支持按注册名查询、分页查看六面纹理和代表色、查看排除原因、选择颜色和朝向匹配单个方块，以及导出调色板 JSON。调色板保存在本次服务的内存中，重启服务后重新扫描或导入原始 ZIP。
 
-用户放在项目根目录的 `block-index-*.zip` 可直接从面板点击“读取项目索引”，无需再次选择上传文件；这些索引通过 `.gitignore` 排除。运行时方块数字 ID 按索引原值保留，支持 GTNH 扩展 ID，不再施加原版 4095 上限。Metadata 仍使用索引协议 v1 的 0～15 范围。没有修改辅助模组协议，无需重新导出已有 ZIP。
+用户放在项目根目录的 `block-index-*.zip` 可直接从面板点击“读取项目索引”，无需再次选择上传文件；这些索引通过 `.gitignore` 排除。运行时方块数字 ID 按索引原值保留，支持 GTNH 扩展 ID，不再施加原版 4095 上限。Metadata 仍使用索引协议 v1 的 0～15 范围。旧 ZIP 继续支持生成、预览与编辑；查看本地化名称需要用 0.1.2 辅助模组重新导出。
 
 颜色统计只计算可见像素的 RGB 均值、D65 Lab、纹理方差和透明比例，完全透明像素不参与均值。匹配按指定面的 Lab 欧氏距离（CIE76）和纹理方差惩罚排序，目前用于候选查看；整雕像匹配阶段将继续处理多面一致性与色差策略。
 
@@ -88,7 +108,7 @@ Modernity 等包的 CTM 规则会保留并按 `matchBlocks`、`matchTiles`、数
 
 ## 获取 GTNH 运行时索引
 
-辅助模组源码、安装和构建说明见 [block-exporter/README.md](block-exporter/README.md)。当前构建产物位于 `output/skinstatueindex-0.1.1.jar`。
+辅助模组源码、安装和构建说明见 [block-exporter/README.md](block-exporter/README.md)。当前构建产物位于 `output/skinstatueindex-0.1.2.jar`。
 
 1. 关闭游戏，把 JAR 放入 GTNH 2.9.0 客户端实例的 `.minecraft/mods/`，然后重新启动游戏。
 2. 选择实际使用的资源包并进入世界。默认等待 60 个客户端 tick 后自动导出一次；保持在世界中，完成后聊天栏显示完整路径。
@@ -183,6 +203,7 @@ run.py                     启动入口
 skin_statue/core/skin.py    UV、旧皮肤转换、图层解析、PNG 编码
 skin_statue/core/palette.py 逐面颜色、候选筛选和单色匹配
 skin_statue/core/statue.py  整数体素、多面匹配、空心处理、贪心网格和图集
+skin_statue/core/editing.py 候选排序、整类替换、自包含工程读写
 skin_statue/core/schematic.py Alpha Schematic、扩展 ID、I 点偏移、读回校验和诊断 ZIP
 skin_statue/resources/      实例扫描、CTM 规则、运行时注册表导入
 skin_statue/main.py         FastAPI 解析接口和静态资源服务
@@ -204,9 +225,10 @@ python -m compileall -q run.py skin_statue
 node --check skin_statue/web/app.js
 node --check skin_statue/web/resources.js
 node --check skin_statue/web/statue.js
+node --check skin_statue/web/editor.js
 ```
 
-按项目 skill，当前开发执行构建和静态检查，不运行自动化或冒烟测试。皮肤双层预览、辅助模组导出、雕像预览和结构粘贴已由用户实际使用。当前人工验收请重新生成并确认材料清单不含混凝土粉末等重力块，对照眼睛、脸部的预览与游戏纹理；再开启连接纹理优先，查看候选和生成材料变化以及游戏中的相邻连接效果。
+按项目 skill，当前开发执行构建和静态检查，不运行自动化或冒烟测试。皮肤双层预览、辅助模组导出、雕像预览和结构粘贴已由用户实际使用。本次新增功能未运行自动化、冒烟或游戏内容测试。人工验收：点击正面／侧面／顶面的单个方块，确认位置与 ID；使用候选前后切换、下一批和指定搜索替换，查看整类数量、撤销／重做及导出后的游戏结果；分别保存草稿、下载工程，重启服务并打开后继续替换；用自己的 Java 用户名查询皮肤，检查手臂模型。
 
 资源接口：
 
@@ -223,13 +245,22 @@ node --check skin_statue/web/statue.js
 | `GET /api/resources/loaded` | 返回当前已载入调色板的概要 |
 | `POST /api/statue/generate` | multipart `file`、`model`、JSON 字符串 `options`；返回图集、材料统计及批处理网格 |
 | `GET /api/statue/{id}/export` | `profile=worldedit_gtnh/mcedit/schematica_gtnh`，`bundle=true` 时返回结构及诊断 ZIP |
+| `POST /api/skin/username` | JSON `username`；查询官方 Java 皮肤及模型 |
+| `GET /api/statue/{id}/block` | `x,y,z` 为裁剪盒内坐标，返回真实材料与同类数量 |
+| `GET /api/statue/{id}/candidates` | `key` 指定材料，按原皮肤目标色返回候选排序 |
+| `POST /api/statue/{id}/replace` | JSON `source,target`；整类替换并生成独立快照 |
+| `GET /api/statue/{id}/snapshot` | 恢复当前会话的已有编辑快照 |
+| `GET /api/statue/{id}/project` | 下载自带候选纹理的 `.skinproj` |
+| `POST /api/projects/open` | multipart `file`；打开工程 |
+| `POST /api/statue/{id}/draft` | 在项目内持久保存草稿 |
+| `GET /api/drafts` / `POST /api/drafts/{id}/open` | 列出草稿／打开草稿 |
 | `GET /api/statue/capabilities` | 返回生成、预览、导出模式及支持的高度 |
 
 每张不同纹理只分析一次，时间与纹理像素总量线性相关。索引状态建立与状态／表面数量线性相关；单色匹配遍历可用候选，时间 O(P)。索引 ZIP 上限 128 MB，总展开大小上限 512 MB，直接读取且不解压到游戏目录。
 
 雕像体素与目标色缓冲区空间 O(V)；唯一颜色／可见面组合数为 U、可用候选数为 P 时，匹配计算 O(U×P)。隐藏面剔除和空心腐蚀线性遍历体素，网格合并按二维切片连续矩形处理。返回网格以 little-endian Int32 的 Base64 表示，每条记录为 `[x,y,z,face,width,height,tile]`；面顺序为 east／west／up／down／south／north。
 
-导出在同一份裁剪后的状态数组上进行，序列化和读回校验时间与体素数线性相关，额外空间 O(V)。完整体素快照仅保留在服务端，浏览器通过 `statue_id` 下载对应结果。
+导出在同一份裁剪后的状态数组上进行，序列化和读回校验时间与体素数线性相关，额外空间 O(V)。完整体素快照保留在服务端，浏览器通过 `statue_id` 下载对应结果；工程和草稿将当前状态持久保存。候选排序计算 O(Uₘ×P + P log P)，Uₘ 为选中材料的原皮肤颜色组合数；批量替换和网格重建 O(V)，额外体素空间 O(V)。
 
 ## 参考与第三方资源
 

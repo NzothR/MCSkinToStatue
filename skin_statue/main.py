@@ -1,24 +1,34 @@
-"""FastAPI 本地服务：无持久化的皮肤解析接口和离线前端。"""
+"""FastAPI 本地服务：皮肤解析、雕像编辑、工程与草稿。"""
 
+import base64
 import hashlib
 import json
 import logging
 from collections import OrderedDict
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from skin_statue.core.editing import (
+    block_at,
+    open_project,
+    project_bytes,
+    ranked_candidates,
+    replace_material,
+)
 from skin_statue.core.palette import Palette
 from skin_statue.core.schematic import PROFILES, export_bundle, placement, schematic_bytes
 from skin_statue.core.skin import parse_skin
 from skin_statue.core.statue import GeneratedStatue, generate_statue
 from skin_statue.resources.instance import InstanceResources
+from skin_statue.resources.java_skin import fetch_skin
 from skin_statue.resources.registry import import_runtime_index, vanilla_palette
 
 WEB = Path(__file__).parent / "web"
@@ -26,6 +36,180 @@ app = FastAPI(title="Skin Statue · 皮肤预览", docs_url=None, redoc_url=None
 PALETTES: dict[str, Palette] = {}
 STATUES: OrderedDict[str, GeneratedStatue] = OrderedDict()
 PROJECT = WEB.parents[1]
+DRAFTS = PROJECT / "drafts"
+
+
+class Replacement(BaseModel):
+    """整类替换按注册名和 Metadata 精确指定源与目标。"""
+
+    source: str
+    target: str
+
+
+class UsernameRequest(BaseModel):
+    """公开档案查询只需要 Java 用户名。"""
+
+    username: str
+
+
+@app.exception_handler(ValueError)
+async def invalid_input(request, exc):
+    """向编辑和工程界面传递输入错误的具体原因。"""
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+def get_statue(identity: str) -> GeneratedStatue:
+    """访问最近快照时更新缓存顺序，防止连续编辑淘汰正在查看的结果。"""
+    if identity not in STATUES:
+        raise HTTPException(410, "雕像快照已过期，请打开草稿或工程。")
+    STATUES.move_to_end(identity)
+    return STATUES[identity]
+
+
+def remember(statue: GeneratedStatue) -> dict:
+    """登记独立快照，保留最近 20 次生成或编辑用于撤销。"""
+    identity = uuid4().hex
+    statue.preview["statue_id"] = identity
+    STATUES[identity] = statue
+    while len(STATUES) > 20:
+        STATUES.popitem(last=False)
+    return statue.preview
+
+
+@app.post("/api/skin/username")
+async def username_skin(request: UsernameRequest) -> dict:
+    """查询正版 Java 皮肤并携带官方手臂模型信息。"""
+    return await run_in_threadpool(fetch_skin, request.username.strip())
+
+
+@app.get("/api/statue/{identity}/snapshot")
+def snapshot(identity: str) -> dict:
+    """恢复编辑历史中的已有预览。"""
+    return get_statue(identity).preview
+
+
+@app.get("/api/statue/{identity}/block")
+def selected_block(identity: str, x: int, y: int, z: int) -> dict:
+    """查询点击位置的实际方块状态及该类方块总数。"""
+    return block_at(get_statue(identity), (x, y, z))
+
+
+@app.get("/api/statue/{identity}/candidates")
+async def candidates(identity: str, key: str) -> dict:
+    """返回完整稳定排序的轻量候选表，浏览器按批显示且不随切换重新排序。"""
+    statue = get_statue(identity)
+    rows = await run_in_threadpool(
+        ranked_candidates, statue, get_palette(statue.preview["palette_id"]), key
+    )
+    return {
+        "candidates": [
+            {
+                "cost": row["cost"],
+                "entry": {
+                    **{
+                        k: row["entry"].get(k)
+                        for k in (
+                            "key",
+                            "display_name",
+                            "registry_name",
+                            "numeric_id",
+                            "metadata",
+                            "connected_texture",
+                        )
+                    },
+                    "faces": {"south": row["entry"]["faces"]["south"]},
+                },
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.post("/api/statue/{identity}/replace")
+async def replace(identity: str, request: Replacement) -> dict:
+    """批量替换一个状态并返回可直接导出的新快照。"""
+    statue = get_statue(identity)
+    result = await run_in_threadpool(
+        replace_material,
+        statue,
+        get_palette(statue.preview["palette_id"]),
+        request.source,
+        request.target,
+    )
+    return remember(result)
+
+
+@app.get("/api/statue/{identity}/project")
+async def save_project(identity: str) -> Response:
+    """下载自带纹理与皮肤的工程文件。"""
+    statue = get_statue(identity)
+    data = await run_in_threadpool(project_bytes, statue, get_palette(statue.preview["palette_id"]))
+    return Response(
+        data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="statue-{identity[:8]}.skinproj"'},
+    )
+
+
+def restore_project(data: bytes) -> dict:
+    """恢复工程并登记自带调色板，供预览、替换与重新生成共用。"""
+    statue, palette = open_project(data)
+    PALETTES[palette.id] = palette
+    return {
+        "statue": remember(statue),
+        "palette": palette.summary(),
+        "skin": "data:image/png;base64," + base64.b64encode(statue.normalized_skin).decode("ascii"),
+    }
+
+
+@app.post("/api/projects/open")
+async def load_project(file: Annotated[UploadFile, File()]) -> dict:
+    """打开工程而不通过结构格式丢失编辑上下文。"""
+    try:
+        data = await file.read(128 * 1024 * 1024 + 1)
+        if len(data) > 128 * 1024 * 1024:
+            raise HTTPException(413, "工程需不超过 128 MB。")
+        return await run_in_threadpool(restore_project, data)
+    finally:
+        await file.close()
+
+
+@app.get("/api/drafts")
+def drafts() -> dict:
+    """列出项目目录中持久保存的手动草稿。"""
+    return {
+        "drafts": [
+            {"id": p.stem, "name": p.stem, "size": p.stat().st_size}
+            for p in sorted(DRAFTS.glob("*.skinproj"), reverse=True)
+        ]
+    }
+
+
+@app.post("/api/statue/{identity}/draft")
+async def save_draft(identity: str) -> dict:
+    """每次保存独立草稿，服务重启后仍可打开。"""
+    statue = get_statue(identity)
+
+    def save() -> dict:
+        data = project_bytes(statue, get_palette(statue.preview["palette_id"]))
+        DRAFTS.mkdir(exist_ok=True)
+        name = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid4().hex[:8]
+        target = DRAFTS / f"{name}.skinproj"
+        temporary = target.with_suffix(".part")
+        temporary.write_bytes(data)
+        temporary.replace(target)
+        return {"id": name}
+
+    return await run_in_threadpool(save)
+
+
+@app.post("/api/drafts/{identity}/open")
+async def load_draft(identity: str) -> dict:
+    """只打开草稿列表中的文件。"""
+    files = {p.stem: p for p in DRAFTS.glob("*.skinproj")}
+    if identity not in files:
+        raise HTTPException(404, "草稿不存在。")
+    return await run_in_threadpool(lambda: restore_project(files[identity].read_bytes()))
 
 
 class StatueOptions(BaseModel):
@@ -180,10 +364,8 @@ async def build_statue(
         def build() -> dict:
             parsed = parse_skin(data, model)
             statue = generate_statue(parsed, palette, settings.model_dump(exclude={"palette_id"}))
-            identity = uuid4().hex
             statue.preview.update(
                 {
-                    "statue_id": identity,
                     "source": {
                         "filename": file.filename,
                         "sha256": hashlib.sha256(data).hexdigest(),
@@ -194,11 +376,7 @@ async def build_statue(
                     "placement": placement(statue.state_indices.shape),
                 }
             )
-            STATUES[identity] = statue
-            # 最多保留四份完整快照，避免连续调节时累积体素和图集内存。
-            while len(STATUES) > 4:
-                STATUES.popitem(last=False)
-            return statue.preview
+            return remember(statue)
 
         return await run_in_threadpool(build)
     except ValueError as exc:
@@ -214,9 +392,7 @@ async def export_statue(
     bundle: bool = False,
 ) -> Response:
     """下载指定预览快照的 Schematic 或结构／材料诊断 ZIP。"""
-    if identity not in STATUES:
-        raise HTTPException(410, "这份雕像快照已过期或服务已重启，请重新生成后导出。")
-    statue = STATUES[identity]
+    statue = get_statue(identity)
     try:
         payload = await run_in_threadpool(
             export_bundle if bundle else schematic_bytes, statue, profile
@@ -247,7 +423,10 @@ def palette_entries(
     entries = [
         entry
         for entry in palette.entries
-        if needle in entry["key"].casefold()
+        if needle
+        in (
+            entry["key"] + " " + (entry.get("display_name") or "") + " " + str(entry["numeric_id"])
+        ).casefold()
         and (
             not eligible_only
             or entry["eligible"]

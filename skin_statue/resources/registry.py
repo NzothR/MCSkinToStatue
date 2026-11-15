@@ -149,6 +149,7 @@ def import_runtime_index(data: bytes) -> Palette:
                     "created_at",
                     "exporter_version",
                     "capture_scope",
+                    "language",
                     "server_resource_pack",
                 )
             }
