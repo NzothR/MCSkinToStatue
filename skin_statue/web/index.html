@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111b20">
+  <title>Skin Statue · 皮肤工作台</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='%236ee7b7' d='M16 2 29 9v14l-13 7L3 23V9zm0 3L7 10l9 5 9-5zm-10 8v8l8 4v-8zm12 4v8l8-4v-8z'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="importmap">{"imports":{"three":"/static/vendor/three.module.min.js"}}</script>
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand"><span class="brand-mark">◇</span><div>SKIN STATUE<span class="brand-sub">Minecraft 皮肤工作台</span></div></div>
+    <span class="workspace-tag">01 / 皮肤预览</span>
+    <div class="local-badge"><span></span> 本地运行 · 离线可用</div>
+  </header>
+  <main class="workspace">
+    <aside class="sidebar">
+      <section>
+        <div class="section-heading"><span class="step">01</span><h2>导入皮肤</h2><button id="demo" class="text-button">载入示例</button></div>
+        <label class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="选择或拖入 PNG 皮肤">
+          <input type="file" id="skin-file" accept="image/png,.png" hidden>
+          <span class="upload-icon">↥</span><strong>选择或拖入皮肤</strong><span>64 × 64 或 64 × 32 · PNG</span>
+        </label>
+        <div id="file-info" class="file-info">尚未导入皮肤</div>
+      </section>
+      <section>
+        <div class="section-heading"><span class="step">02</span><h2>模型设置</h2></div>
+        <div class="segmented" aria-label="模型类型">
+          <label><input type="radio" name="model" value="steve" checked><span>Steve <small>4px 手臂</small></span></label>
+          <label><input type="radio" name="model" value="alex"><span>Alex <small>3px 手臂</small></span></label>
+        </div>
+        <p class="hint" id="model-hint">请选择与皮肤匹配的手臂模型。</p>
+      </section>
+      <section class="layer-section">
+        <div class="section-heading"><span class="step">03</span><h2>皮肤图层</h2></div>
+        <div class="layer-masters">
+          <label><input type="checkbox" id="base-visible" checked> 基础层</label>
+          <label><input type="checkbox" id="overlay-visible" checked> 第二层</label>
+        </div>
+        <div class="layer-table-heading"><span>身体部位</span><span>基础</span><span>外层</span></div>
+        <div id="part-controls" class="part-controls"></div>
+        <p class="hint">左右方向以角色自身为准。可单独查看帽子、外套和袖口。</p>
+      </section>
+      <section class="export-section">
+        <div class="section-heading"><span class="step">04</span><h2>导出</h2></div>
+        <label class="sr-only" for="export-kind">导出内容</label>
+        <select id="export-kind">
+          <option value="normalized">完整皮肤 · 64 × 64 PNG</option>
+          <option value="base">仅基础层 · 64 × 64 PNG</option>
+          <option value="overlay">仅第二层 · 64 × 64 PNG</option>
+          <option value="original">原始皮肤 PNG</option>
+          <option value="screenshot">当前 3D 视角 PNG</option>
+        </select>
+        <button id="export" class="primary-button" disabled><span>↓</span> 导出 PNG</button>
+        <p class="hint">图层开关仅影响预览和截图。</p>
+      </section>
+    </aside>
+    <section class="preview-panel" aria-label="皮肤三维预览">
+      <div class="preview-header"><div><span class="eyebrow">SKIN VIEWER</span><h1>每一面，都看清楚。</h1></div><span id="format-badge" class="format-badge">等待皮肤</span></div>
+      <div class="viewport" id="viewport">
+        <canvas id="viewer" aria-label="可旋转的 Minecraft 皮肤三维模型" tabindex="0"></canvas>
+        <div class="view-toolbar" aria-label="固定视角">
+          <button data-view="front">正面</button><button data-view="back">背面</button><button data-view="left">左侧</button><button data-view="right">右侧</button><button data-view="top">顶部</button><span></span><button data-view="reset" title="重置相机和旋转">↺ 重置</button>
+        </div>
+        <div class="scene-label"><span class="scene-dot"></span> 标准站姿 <span class="axis-label">Y ↑</span></div>
+        <div class="atlas-card"><div><strong>纹理图集</strong><select id="atlas-kind" aria-label="纹理图集图层"><option value="normalized">完整</option><option value="base">基础</option><option value="overlay">外层</option></select></div><div class="checker"><img id="atlas" alt="64×64 皮肤纹理图集" hidden></div><span>最近邻采样 · 保留像素边界</span></div>
+        <div id="loading" class="loading" hidden>正在解析皮肤…</div>
+      </div>
+      <div class="preview-options">
+        <label><input type="checkbox" id="grid-visible" checked> 地面网格</label>
+        <label><input type="checkbox" id="auto-rotate"> 自动旋转</label>
+        <label><input type="checkbox" id="flat-color"> 原始颜色</label>
+        <div class="background-options" aria-label="预览背景"><button data-bg="dark" class="swatch dark active" aria-label="深色背景"></button><button data-bg="light" class="swatch light" aria-label="浅色背景"></button><button data-bg="checker" class="swatch checker" aria-label="棋盘背景"></button></div>
+      </div>
+      <footer class="statusbar"><span id="status" role="status" aria-live="polite">正在准备预览…</span><span class="mouse-help">左键旋转 · 滚轮缩放 · 右键平移</span></footer>
+      <div id="notice" class="notice" role="alert" hidden></div>
+    </section>
+  </main>
+  <noscript>请启用 JavaScript 后使用 3D 皮肤预览。</noscript>
+</body>
+</html>
