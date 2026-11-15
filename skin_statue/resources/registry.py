@@ -7,6 +7,7 @@ from zipfile import BadZipFile, ZipFile
 
 from skin_statue.core.palette import FACES, Palette
 from skin_statue.resources.ctm import affected_by_ctm
+from skin_statue.resources.gravity import affected_by_gravity
 from skin_statue.resources.instance import InstanceResources
 
 COLORS = (
@@ -153,6 +154,7 @@ def import_runtime_index(data: bytes) -> Palette:
             }
             texture_cache = {}
             for block in root["blocks"]:
+                gravity = affected_by_gravity(block)
                 reasons = [
                     flag
                     for flag in ("world_dependent_icon", "world_dependent_color")
@@ -179,9 +181,13 @@ def import_runtime_index(data: bytes) -> Palette:
                             "icon_name": icon_name,
                             "animated": descriptor["animated"],
                             "pixel_source": descriptor.get("pixel_source"),
+                            "connected_texture": descriptor.get("connected_texture", False)
+                            or descriptor["sprite_class"].startswith(
+                                "com.github.wohaopa.MyCTMLib."
+                            ),
                         }
                     state_reasons = list(reasons)
-                    if affected_by_ctm(
+                    if any(f["connected_texture"] for f in faces.values()) or affected_by_ctm(
                         block["registry_name"],
                         number,
                         state["metadata"],
@@ -191,7 +197,13 @@ def import_runtime_index(data: bytes) -> Palette:
                         state_reasons.append("connected_texture")
                     if root.get("server_resource_pack"):
                         state_reasons.append("server_pack_rules_unreviewed")
-                    palette.add_state(block["registry_name"], number, state, faces, state_reasons)
+                    palette.add_state(
+                        block["registry_name"],
+                        number,
+                        {**state, "gravity_affected": gravity},
+                        faces,
+                        state_reasons,
+                    )
     except (BadZipFile, KeyError, json.JSONDecodeError, TypeError) as exc:
         raise ValueError(f"索引 ZIP 的结构不完整：{exc}") from exc
     return palette

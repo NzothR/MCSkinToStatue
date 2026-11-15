@@ -73,11 +73,7 @@ def paint_faces(targets, occupied, base, owners, box, part, layer, image, option
 
 def match_surface(occupied, targets, palette, options):
     """对唯一的可见面颜色组合批量匹配，同一体素的所有外露面共同计分。"""
-    candidates = [
-        entry
-        for entry in palette.entries
-        if entry["eligible"] and entry["key"] not in options["excluded"]
-    ]
+    candidates = palette.candidates(options["prefer_connected"], options["excluded"])
     if not candidates:
         raise ValueError("没有可用的完整方块候选，请载入调色板或调整禁用列表。")
     visible = np.stack([exposure(occupied, axis, sign) for axis, sign in DIRECTIONS], axis=-1)
@@ -108,6 +104,13 @@ def match_surface(occupied, targets, palette, options):
         / 2.55
     )
     selected = np.empty(len(unique), dtype=np.int32)
+    connection_bonus = np.array(
+        [
+            3 if options["prefer_connected"] and entry["connected_texture"] else 0
+            for entry in candidates
+        ],
+        dtype=np.float32,
+    )
     errors = np.empty(len(unique), dtype=np.float32)
     maxima = np.empty(len(unique), dtype=np.float32)
     for index, signature in enumerate(unique):
@@ -117,6 +120,7 @@ def match_surface(occupied, targets, palette, options):
         weights = ((int(signature[18]) >> np.arange(6)) & 1).astype(np.float32)
         delta = np.sqrt(((labs - target) ** 2).sum(axis=2))
         costs = ((delta + options["smoothness"] * noise) * weights).sum(axis=1) / weights.sum()
+        costs -= connection_bonus
         best = int(costs.argmin())
         selected[index] = best
         errors[index] = (delta[best] * weights).sum() / weights.sum()

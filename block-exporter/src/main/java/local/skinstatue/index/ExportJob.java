@@ -3,9 +3,11 @@ package local.skinstatue.index;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.lang.reflect.Method;
 import java.nio.IntBuffer;
 import java.nio.charset.StandardCharsets;
@@ -29,6 +31,8 @@ import java.util.zip.ZipOutputStream;
 import javax.imageio.ImageIO;
 
 import net.minecraft.block.Block;
+import net.minecraft.block.BlockDragonEgg;
+import net.minecraft.block.BlockFalling;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.item.Item;
@@ -51,6 +55,7 @@ import org.lwjgl.opengl.GLContext;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 
 /** Versioned ZIP containing the live registry and decoded, resource-pack-resolved atlas pixels. */
@@ -128,6 +133,14 @@ final class ExportJob {
             "class_name",
             block.getClass()
                 .getName());
+        JsonArray hierarchy = new JsonArray();
+        boolean gravity = block instanceof BlockFalling || block instanceof BlockDragonEgg;
+        for (Class<?> type = block.getClass(); type != null; type = type.getSuperclass()) {
+            hierarchy.add(new JsonPrimitive(type.getName()));
+            gravity |= "de.katzenpapst.amunra.block.BlockFallingMeta".equals(type.getName());
+        }
+        blockJson.add("class_hierarchy", hierarchy);
+        blockJson.addProperty("gravity_affected", gravity);
         blockJson.addProperty("metadata_source", "probe_0_15_with_creative_confirmation");
         try {
             blockJson.addProperty("world_dependent_icon", overridesWorldMethod(block.getClass(), IIcon.class, 5));
@@ -274,6 +287,25 @@ final class ExportJob {
             sprite.getClass()
                 .getName());
         result.addProperty("pixel_source", pixelSource);
+        ResourceLocation iconLocation = new ResourceLocation(name);
+        ResourceLocation metadataLocation = new ResourceLocation(
+            iconLocation.getResourceDomain(),
+            "textures/blocks/" + iconLocation.getResourcePath() + ".png.mcmeta");
+        boolean connected = false;
+        try (InputStreamReader reader = new InputStreamReader(
+            Minecraft.getMinecraft()
+                .getResourceManager()
+                .getResource(metadataLocation)
+                .getInputStream(),
+            StandardCharsets.UTF_8)) {
+            JsonObject metadata = new JsonParser().parse(reader)
+                .getAsJsonObject();
+            connected = metadata.has("myctmlib") && metadata.getAsJsonObject("myctmlib")
+                .has("connection");
+        } catch (FileNotFoundException absentMetadata) {
+            // PNG sidecar metadata is optional; absence is an ordinary non-connected texture.
+        }
+        result.addProperty("connected_texture", connected);
         textureCache.put(name, result);
         return result;
     }
@@ -427,7 +459,7 @@ final class ExportJob {
         JsonObject root = new JsonObject();
         root.addProperty("format", "skin-statue-block-index");
         root.addProperty("schema_version", 1);
-        root.addProperty("exporter_version", "0.1.0");
+        root.addProperty("exporter_version", "0.1.1");
         root.addProperty("minecraft_version", "1.7.10");
         root.addProperty("capture_scope", "static_getIcon_resolved_atlas");
         root.addProperty("created_at", new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX").format(new Date()));

@@ -65,7 +65,8 @@ async function exportStatue(bundle) {
 
 /** 生成按钮依赖有效皮肤和可用调色板。 */
 function updateGenerateButton() {
-  $("#generate-statue").disabled = !skin || !palette?.eligible || loading || generating;
+  const count = (palette?.eligible ?? 0) + ($("#statue-connected").checked ? (palette?.connected_eligible ?? 0) : 0);
+  $("#generate-statue").disabled = !skin || !count || loading || generating;
 }
 
 /** 参数改变后保留上次可看的结果，并明确提示需要重新生成。 */
@@ -118,6 +119,7 @@ async function generateStatue() {
     hollow: $("#statue-hollow").value === "hollow", shell_thickness: Number($("#statue-thickness").value),
     overlay_offset: Number($("#statue-offset").value), alpha_threshold: Number($("#statue-alpha").value),
     smoothness: Number($("#statue-smoothness").value), excluded: excludedBlocks, layers,
+    prefer_connected: $("#statue-connected").checked,
   };
   try {
     const form = new FormData();
@@ -386,8 +388,10 @@ function buildLayerControls() {
 function updateVisibility() {
   if (!player) return;
   if (statueMesh) {
-    statueMesh.material.uniforms.rawColor.value = $("#flat-color").checked;
-    statueMesh.material.uniforms.plainColor.value = $("#statue-plain").checked;
+    for (const material of statueMesh.material) {
+      material.uniforms.rawColor.value = $("#flat-color").checked;
+      material.uniforms.plainColor.value = $("#statue-plain").checked;
+    }
   }
   for (const mesh of player.children) {
     mesh.visible = visibility.get(mesh.userData.key) && mesh.userData.pixels > 0;
@@ -511,10 +515,11 @@ function bindUI() {
   $("#show-skin").addEventListener("click", () => showMode("skin"));
   $("#show-statue").addEventListener("click", () => showMode("statue"));
   document.querySelectorAll(".statue-settings select, .statue-settings input").forEach((input) => input.addEventListener("change", markStatueChanged));
+  $("#statue-connected").addEventListener("change", () => { updateGenerateButton(); window.dispatchEvent(new Event("connected-preference")); });
   window.addEventListener("palette-loaded", (event) => {
     palette = event.detail;
     excludedBlocks = [];
-    $("#statue-palette").textContent = `当前调色板：${palette.eligible.toLocaleString()} 个静态候选`;
+    $("#statue-palette").textContent = `静态候选 ${palette.eligible.toLocaleString()}；连接纹理候选 ${palette.connected_eligible.toLocaleString()}`;
     markStatueChanged();
     updateGenerateButton();
   });

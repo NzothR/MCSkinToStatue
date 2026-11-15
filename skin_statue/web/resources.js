@@ -9,6 +9,7 @@ const REASONS = {
   animated: "动态纹理", air_or_fluid: "空气或流体", missing_texture: "纹理缺失",
   world_dependent_icon: "纹理依赖世界环境", world_dependent_color: "颜色依赖世界环境",
   connected_texture: "资源包连接纹理", server_pack_rules_unreviewed: "服务器资源包规则待确认",
+  gravity_affected: "重力方块（不能悬空）",
 };
 let palette = null;
 let offset = 0;
@@ -49,7 +50,7 @@ async function showPalette(payload) {
   summary.hidden = false;
   const packs = palette.resource_packs.length ? palette.resource_packs.join(" → ") : "未启用资源包";
   const lines = [
-    `来源：${palette.source === "runtime_index" ? "游戏运行时索引" : "1.7.10 原版已知映射"} · 注册方块 ${palette.registry_count} · 状态 ${palette.states} · 纹理 ${palette.textures} · 静态候选 ${palette.eligible}`,
+    `来源：${palette.source === "runtime_index" ? "游戏运行时索引" : "1.7.10 原版已知映射"} · 注册方块 ${palette.registry_count} · 状态 ${palette.states} · 纹理 ${palette.textures} · 静态候选 ${palette.eligible} · 连接纹理候选 ${palette.connected_eligible}`,
     `资源包顺序（后项优先）：${packs}`,
   ];
   if (payload.scan) {
@@ -72,13 +73,13 @@ async function showPalette(payload) {
 /** 创建包含六面纹理和代表色的方块卡片。 */
 function blockCard(entry) {
   const card = document.createElement("article");
-  card.className = `block-card${entry.eligible ? "" : " excluded"}`;
+  card.className = `block-card${entry.eligible || entry.connected_eligible ? "" : " excluded"}`;
   const title = document.createElement("div");
   title.className = "block-name";
   title.textContent = entry.registry_name;
   const meta = document.createElement("div");
   meta.className = "block-meta";
-  meta.textContent = `ID ${entry.numeric_id} / Metadata ${entry.metadata} · ${entry.eligible ? "静态候选" : "已排除"}`;
+  meta.textContent = `ID ${entry.numeric_id} / Metadata ${entry.metadata} · ${entry.eligible ? "静态候选" : entry.connected_eligible ? "连接纹理候选" : "已排除"}`;
   const faces = document.createElement("div");
   faces.className = "block-faces";
   for (const [direction, name] of Object.entries(FACE_NAMES)) {
@@ -100,7 +101,7 @@ function blockCard(entry) {
     faces.append(face);
   }
   card.append(title, meta, faces);
-  if (entry.eligible) {
+  if (entry.eligible || entry.connected_eligible) {
     const label = document.createElement("label");
     label.className = "block-enabled";
     const enabled = document.createElement("input");
@@ -110,7 +111,7 @@ function blockCard(entry) {
       if (enabled.checked) excluded.delete(entry.key); else excluded.add(entry.key);
       window.dispatchEvent(new CustomEvent("palette-exclusions", { detail: [...excluded] }));
     });
-    label.append(enabled, "允许用于雕像");
+    label.append(enabled, entry.connected_eligible ? "连接纹理优先开启时允许使用" : "允许用于雕像");
     card.append(label);
   }
   if (entry.exclusions.length) {
@@ -127,7 +128,7 @@ function blockCard(entry) {
 async function loadPage() {
   if (!palette) return;
   const id = ++pageRequest;
-  const query = new URLSearchParams({ search: $("#palette-search").value, eligible_only: $("#eligible-only").checked, offset, limit: PAGE_SIZE });
+  const query = new URLSearchParams({ search: $("#palette-search").value, eligible_only: $("#eligible-only").checked, include_connected: $("#statue-connected").checked, offset, limit: PAGE_SIZE });
   try {
     const result = await requestJSON(`/api/palettes/${palette.id}/entries?${query}`);
     if (id !== pageRequest) return;
@@ -145,6 +146,7 @@ async function loadPage() {
 
 /** 绑定实例扫描、索引上传、调色板查询及单色匹配。 */
 export function initResourcePanel() {
+  window.addEventListener("connected-preference", () => { offset = 0; void loadPage(); });
   requestJSON("/api/resources/loaded").then((result) => {
     if (result.palettes.length === 1 && !palette) return showPalette({ palette: result.palettes[0] });
   }).catch((error) => report(error.message, true));
@@ -199,7 +201,7 @@ export function initResourcePanel() {
     if (!palette) return;
     const rgb = $("#match-color").value.match(/[a-f\d]{2}/gi).map((value) => parseInt(value, 16));
     try {
-      const result = await requestJSON(`/api/palettes/${palette.id}/match`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rgb, face: $("#match-face").value, excluded: [...excluded] }) });
+      const result = await requestJSON(`/api/palettes/${palette.id}/match`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rgb, face: $("#match-face").value, excluded: [...excluded], prefer_connected: $("#statue-connected").checked }) });
       $("#match-result").textContent = `${result.key} · 匹配代价 ${result.cost}`;
     } catch (error) { $("#match-result").textContent = error.message; }
   });

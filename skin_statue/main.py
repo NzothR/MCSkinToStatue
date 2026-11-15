@@ -39,6 +39,7 @@ class StatueOptions(BaseModel):
     overlay_offset: int = Field(default=1, ge=1, le=3)
     alpha_threshold: int = Field(default=128, ge=1, le=255)
     smoothness: float = Field(default=0.2, ge=0, le=1)
+    prefer_connected: bool = False
     excluded: set[str] = Field(default_factory=set)
     layers: list[str]
 
@@ -56,6 +57,7 @@ class MatchRequest(BaseModel):
     rgb: tuple[int, int, int]
     face: Literal["east", "west", "up", "down", "south", "north"] = "south"
     smoothness: float = Field(default=0.2, ge=0, le=1)
+    prefer_connected: bool = False
     excluded: set[str] = Field(default_factory=set)
 
 
@@ -235,6 +237,7 @@ def palette_entries(
     identity: str,
     search: str = "",
     eligible_only: bool = False,
+    include_connected: bool = False,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=40, ge=1, le=100),
 ) -> dict:
@@ -244,7 +247,13 @@ def palette_entries(
     entries = [
         entry
         for entry in palette.entries
-        if needle in entry["key"].casefold() and (not eligible_only or entry["eligible"])
+        if needle in entry["key"].casefold()
+        and (
+            not eligible_only
+            or entry["eligible"]
+            or include_connected
+            and entry["connected_eligible"]
+        )
     ]
     return {"entries": entries[offset : offset + limit], "total": len(entries), "offset": offset}
 
@@ -282,7 +291,11 @@ def match_color(identity: str, request: MatchRequest) -> dict:
         raise HTTPException(422, "RGB 分量必须为 0～255。")
     try:
         return get_palette(identity).match(
-            request.rgb, request.face, request.smoothness, request.excluded
+            request.rgb,
+            request.face,
+            request.smoothness,
+            request.excluded,
+            request.prefer_connected,
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc

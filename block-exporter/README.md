@@ -1,10 +1,10 @@
-# Skin Statue Index 0.1.0
+# Skin Statue Index 0.1.1
 
 用于 GTNH 2.9.0（Minecraft 1.7.10／Forge 10.13.4.1614）的客户端辅助模组。导出当前世界连接后的真实方块注册表、数字 ID、Metadata 探测结果、六面静态图标和已加载纹理，供本地工具建立调色板。
 
 ## 安装与导出
 
-构建产物：项目根目录 `output/skinstatueindex-0.1.0.jar`，或者本目录 `build/libs/skinstatueindex-0.1.0.jar`。安装发布 JAR；`-dev.jar` 和 `-sources.jar` 用于开发。
+构建产物：项目根目录 `output/skinstatueindex-0.1.1.jar`，或者本目录 `build/libs/skinstatueindex-0.1.1.jar`。安装发布 JAR；`-dev.jar` 和 `-sources.jar` 用于开发。更新时替换旧版 JAR，重启客户端。现有 0.1.0 索引仍能导入。
 
 关闭游戏，把发布 JAR 放入客户端 `.minecraft/mods/` 后重启。无需安装到服务器。选择你真正使用的资源包，进入世界后保持客户端运行；默认等待 60 个客户端 tick 后自动开始导出。任务按客户端 tick 分段执行，单次约 6 ms 工作预算，每个状态的纹理读取不可再拆分。
 
@@ -36,6 +36,8 @@
 ## 捕获范围
 
 方块注册表在进入世界后读取，包含注册名和当前连接下的数字 ID。遍历每个方块的 0～15 Metadata，同时读取 `getSubBlocks`，通过物品 Metadata 映射标记创造栏确认的状态。探测到图标表示该调用可读取，最终可放置候选还需要通过筛选。
+
+0.1.1 增加 `class_hierarchy` 和 `gravity_affected`：通过 `BlockFalling`／`BlockDragonEgg` 实例判断及已确认的 AmunRa 自定义重力类识别下落方块，本地调色板排除所有被标记状态。纹理描述同时记录所加载 PNG 的 `.mcmeta` 是否具有 `myctmlib.connection`，供连接纹理偏好筛选。均为协议 v1 的可选扩展字段，基础索引格式保持兼容。
 
 每个状态记录 `getIcon(side, metadata)` 六面图标、普通立方体／不透明标志、渲染类型、TileEntity、静态染色和发光信息。通过 MCP／SRG 方法名和参数签名识别是否重写世界环境图标或染色方法。草地生物群系色、机器外观、连接环境、复杂模型等保留诊断，默认不进入静态调色板。
 

@@ -92,6 +92,8 @@ class Palette:
             reasons.append("tinted")
         if state.get("light_value", 0) != 0:
             reasons.append("emissive")
+        if state.get("gravity_affected", False):
+            reasons.append("gravity_affected")
         if len(faces) != 6:
             reasons.append("missing_faces")
         if any(not face["opaque"] for face in faces.values()):
@@ -114,6 +116,8 @@ class Palette:
                 "metadata": state["metadata"],
                 "faces": faces,
                 "eligible": not reasons,
+                "connected_texture": "connected_texture" in reasons,
+                "connected_eligible": set(reasons) == {"connected_texture"},
                 "exclusions": list(dict.fromkeys(reasons)),
                 "status": state.get("status", "unresolved"),
                 "error": state.get("error"),
@@ -130,26 +134,43 @@ class Palette:
             "states": len(self.entries),
             "textures": len(self.textures),
             "eligible": sum(entry["eligible"] for entry in self.entries),
+            "connected_eligible": sum(entry["connected_eligible"] for entry in self.entries),
             "exclusions": dict(counts),
             "resource_packs": self.resource_packs,
             "errors": self.errors,
             "context": self.context,
         }
 
+    def candidates(self, prefer_connected: bool, excluded) -> list[dict]:
+        """连接纹理选项只放开这一项排除，重力和其他排除条件始终保留。"""
+        return [
+            entry
+            for entry in self.entries
+            if entry["key"] not in excluded
+            and (entry["eligible"] or prefer_connected and entry["connected_eligible"])
+        ]
+
     def match(
-        self, rgb: tuple, face: str, smoothness: float = 0.2, excluded: set | None = None
+        self,
+        rgb: tuple,
+        face: str,
+        smoothness: float = 0.2,
+        excluded: set | None = None,
+        prefer_connected: bool = False,
     ) -> dict:
         """按指定朝向，用 Lab 欧氏距离与纹理起伏寻找静态候选；复杂度 O(P)。"""
         target = rgb_to_lab(rgb)
         blocked = excluded or set()
-        candidates = (
-            entry for entry in self.entries if entry["eligible"] and entry["key"] not in blocked
-        )
+        candidates = self.candidates(prefer_connected, blocked)
 
         def cost(entry: dict) -> float:
             color = entry["faces"][face]
             delta = sqrt(sum((a - b) ** 2 for a, b in zip(target, color["lab"], strict=True)))
-            return delta + smoothness * sqrt(color["variance"]) / 2.55
+            return (
+                delta
+                + smoothness * sqrt(color["variance"]) / 2.55
+                - (3 if prefer_connected and entry["connected_texture"] else 0)
+            )
 
         result = min(candidates, key=cost, default=None)
         if result is None:

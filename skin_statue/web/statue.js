@@ -12,11 +12,15 @@ function rectangle(x, y, z, face, w, h) {
   }
 }
 
-/** 将实际体素的可见面组合为单次材质批处理，合并后仍按每格重复方块贴图。 */
+/** 使用独立纹理层和整数材质索引批处理，重复 UV 不跨越其他贴图。 */
 export async function createStatue(data) {
   const bytes = Uint8Array.from(atob(data.mesh.quads), (character) => character.charCodeAt(0));
   const quads = new Int32Array(bytes.buffer);
   const count = data.mesh.quad_count;
+  const layersPerPage = 128;
+  const pageCount = Math.ceil(data.atlas.colors.length / layersPerPage);
+  const pageQuads = new Uint32Array(pageCount);
+  const order = Array.from({ length: count }, (_, index) => index).sort((a, b) => Math.floor(quads[a * 7 + 6] / layersPerPage) - Math.floor(quads[b * 7 + 6] / layersPerPage));
   const position = new Float32Array(count * 12);
   const normal = new Float32Array(count * 12);
   const uv = new Float32Array(count * 8);
@@ -26,7 +30,9 @@ export async function createStatue(data) {
   const normals = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
   const tileColors = data.atlas.colors.map((rgb) => new THREE.Color().setRGB(...rgb.map((v) => v / 255), THREE.SRGBColorSpace));
   for (let q = 0; q < count; q++) {
-    const [x, y, z, face, w, h, texture] = quads.subarray(q * 7, q * 7 + 7);
+    const source = order[q];
+    const [x, y, z, face, w, h, texture] = quads.subarray(source * 7, source * 7 + 7);
+    pageQuads[Math.floor(texture / layersPerPage)]++;
     const corners = rectangle(x, y, z, face, w, h);
     for (let v = 0; v < 4; v++) {
       position.set(corners[v], q * 12 + v * 3);
@@ -37,11 +43,36 @@ export async function createStatue(data) {
     uv.set([0, h, w, h, 0, 0, w, 0], q * 8);
     indices.set([0, 2, 1, 2, 3, 1].map((v) => q * 4 + v), q * 6);
   }
-  const map = await new THREE.TextureLoader().loadAsync(data.atlas.image);
-  map.colorSpace = THREE.SRGBColorSpace;
-  map.magFilter = THREE.NearestFilter;
-  map.minFilter = THREE.NearestFilter;
-  map.generateMipmaps = false;
+  const source = await new THREE.ImageLoader().loadAsync(data.atlas.image);
+  const canvas = document.createElement("canvas");
+  canvas.width = data.atlas.width; canvas.height = data.atlas.height;
+  const context = canvas.getContext("2d");
+  context.drawImage(source, 0, 0);
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+  const maps = [];
+  const size = data.atlas.tile_size;
+  for (let page = 0; page < pageCount; page++) {
+    const depth = Math.min(layersPerPage, data.atlas.colors.length - page * layersPerPage);
+    const bytes = new Uint8Array(size * size * depth * 4);
+    for (let layer = 0; layer < depth; layer++) {
+      const index = page * layersPerPage + layer;
+      const x = (index % data.atlas.columns) * (size + 2) + 1;
+      const y = Math.floor(index / data.atlas.columns) * (size + 2) + 1;
+      for (let row = 0; row < size; row++) {
+        const from = ((y + row) * canvas.width + x) * 4;
+        // DataArrayTexture 不使用 DOM flipY；显式转换到 OpenGL 的底部行原点。
+        bytes.set(pixels.subarray(from, from + size * 4), (layer * size * size + (size - 1 - row) * size) * 4);
+      }
+    }
+    const map = new THREE.DataArrayTexture(bytes, size, size, depth);
+    map.colorSpace = THREE.SRGBColorSpace;
+    map.magFilter = THREE.NearestFilter;
+    map.minFilter = THREE.NearestFilter;
+    map.wrapS = THREE.RepeatWrapping; map.wrapT = THREE.RepeatWrapping;
+    map.generateMipmaps = false;
+    map.needsUpdate = true;
+    maps.push(map);
+  }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(position, 3));
   geometry.setAttribute("normal", new THREE.BufferAttribute(normal, 3));
@@ -50,56 +81,58 @@ export async function createStatue(data) {
   geometry.setAttribute("blockColor", new THREE.BufferAttribute(colors, 3));
   geometry.setIndex(new THREE.BufferAttribute(indices, 1));
   geometry.computeBoundingSphere();
-  const material = new THREE.ShaderMaterial({
+  let groupStart = 0;
+  pageQuads.forEach((quads, page) => {
+    if (quads) geometry.addGroup(groupStart, quads * 6, page);
+    groupStart += quads * 6;
+  });
+  const materials = maps.map((map, page) => new THREE.ShaderMaterial({
+    glslVersion: THREE.GLSL3,
     uniforms: {
-      atlas: { value: map }, atlasSize: { value: new THREE.Vector2(data.atlas.width, data.atlas.height) },
-      columns: { value: data.atlas.columns }, tileSize: { value: data.atlas.tile_size },
+      tileMap: { value: map }, layerBase: { value: page * layersPerPage },
       rawColor: { value: false }, plainColor: { value: false },
     },
     vertexShader: `attribute float tile;
+      uniform int layerBase;
       attribute vec3 blockColor;
       varying vec2 blockUV;
-      varying float blockTile;
+      flat out int blockTile;
       varying vec3 faceNormal;
       varying vec3 averageColor;
       void main() {
-        blockUV = uv; blockTile = tile; faceNormal = normal; averageColor = blockColor;
+        blockUV = uv; blockTile = int(tile + 0.5) - layerBase; faceNormal = normal; averageColor = blockColor;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }`,
-    fragmentShader: `uniform sampler2D atlas;
-      uniform vec2 atlasSize;
-      uniform float columns;
-      uniform float tileSize;
+    fragmentShader: `precision highp sampler2DArray;
+      uniform sampler2DArray tileMap;
       uniform bool rawColor;
       uniform bool plainColor;
       varying vec2 blockUV;
-      varying float blockTile;
+      flat in int blockTile;
       varying vec3 faceNormal;
       varying vec3 averageColor;
+      out vec4 outputColor;
+      #define gl_FragColor outputColor
       void main() {
-        float tileId = floor(blockTile + 0.5);
-        vec2 origin = vec2(mod(tileId, columns), floor(tileId / columns)) * (tileSize + 2.0) + 1.0;
-        vec2 pixel = origin + vec2(fract(blockUV.x), 1.0 - fract(blockUV.y)) * tileSize;
-        vec2 atlasUV = vec2(pixel.x / atlasSize.x, 1.0 - pixel.y / atlasSize.y);
-        vec3 color = plainColor ? averageColor : texture2D(atlas, atlasUV).rgb;
+        vec3 color = plainColor ? averageColor : texture(tileMap, vec3(blockUV, float(blockTile))).rgb;
         float light = rawColor ? 1.0 : 0.68 + 0.32 * max(dot(normalize(faceNormal), normalize(vec3(-0.4, 0.8, 0.6))), 0.0);
         gl_FragColor = vec4(color * light, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`,
-  });
-  const mesh = new THREE.Mesh(geometry, material);
+  }));
+  const mesh = new THREE.Mesh(geometry, materials);
   // 让不同尺寸以相同玩家比例显示，真实格数保留在体素及统计中。
   mesh.scale.setScalar(1 / data.scale);
-  mesh.userData.atlas = map;
+  mesh.userData.texturePages = maps;
   return mesh;
 }
 
 /** 释放雕像预览占用的纹理、材质和几何资源。 */
 export function disposeStatue(mesh) {
   mesh.geometry.dispose();
-  mesh.material.dispose();
-  mesh.userData.atlas.dispose();
+  mesh.material.forEach((material) => material.dispose());
+  mesh.userData.texturePages.forEach((map) => map.dispose());
 }
 
 /** 用当前包围盒和同一导出原点标出 I；辅助线不写入体素。 */
