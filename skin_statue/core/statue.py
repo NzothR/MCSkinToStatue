@@ -10,6 +10,7 @@ import numpy as np
 from PIL import Image
 
 from skin_statue.core.palette import FACES, Palette, rgb_to_lab
+from skin_statue.core.posed_voxels import posed_voxels
 from skin_statue.core.skin import png_url
 
 LOGGER = logging.getLogger(__name__)
@@ -202,12 +203,17 @@ def texture_atlas(palette, candidates, counts):
     }
 
 
-def greedy_mesh(blocks, lookup, origin):
+def greedy_mesh(blocks, lookup, origin, overrides=None):
     """剔除不透明方块内面，并将同纹理同方向的连续面合并为矩形。"""
     occupied = blocks >= 0
     quads = []
     exposed_count = 0
     for face, (axis, sign) in enumerate(DIRECTIONS):
+        tiles = None
+        if overrides and face in overrides:
+            tiles = lookup[blocks, face].copy()
+            points, choices = overrides[face]
+            tiles[tuple(points.T)] = choices
         faces = exposure(occupied, axis, sign)
         exposed_count += int(faces.sum())
         for plane_index in range(blocks.shape[axis]):
@@ -217,7 +223,7 @@ def greedy_mesh(blocks, lookup, origin):
             state = blocks[plane]
             mask = np.full(state.shape, -1, dtype=np.int32)
             active = faces[plane]
-            mask[active] = lookup[state[active], face]
+            mask[active] = lookup[state[active], face] if tiles is None else tiles[plane][active]
             if axis != 0:
                 mask = mask.T.copy()
             height, width = mask.shape
@@ -261,46 +267,60 @@ def generate_statue(parsed: dict, palette: Palette, options: dict) -> GeneratedS
         BytesIO(base64.b64decode(parsed["images"]["normalized"].split(",", 1)[1]))
     ) as source:
         image = source.convert("RGBA")
-    low = (
-        np.floor(
-            np.min(
-                [np.array(p["position"]) * scale - np.array(p["size"]) * scale / 2 for p in parts],
-                axis=0,
-            )
-        ).astype(int)
-        - offset
-        - 1
+    articulated = any(any(v for v in angle) for angle in options.get("pose", {}).values()) or any(
+        h.get("image") for h in options.get("held", {}).values()
     )
-    high = (
-        np.ceil(
-            np.max(
-                [np.array(p["position"]) * scale + np.array(p["size"]) * scale / 2 for p in parts],
-                axis=0,
-            )
-        ).astype(int)
-        + offset
-        + 1
-    )
-    shape = tuple(high - low)
-    base = np.zeros(shape, dtype=bool)
-    targets = np.zeros((*shape, 6, 4), dtype=np.uint8)
-    boxes = []
-    for part in parts:
-        size = np.array(part["size"]) * scale
-        lo = np.rint(np.array(part["position"]) * scale - size / 2).astype(int) - low
-        hi = lo + size
-        boxes.append((lo, hi))
-        if f"{part['id']}:base" in options["layers"]:
-            base[tuple(slice(lo[i], hi[i]) for i in range(3))] = True
-    occupied = base.copy()
-    owners = np.full(shape, -1, dtype=np.int8)
-    for layer in ("base", "overlay"):
-        for owner, (part, box) in enumerate(zip(parts, boxes, strict=True)):
-            if f"{part['id']}:{layer}" not in options["layers"]:
-                continue
-            if layer == "overlay":
-                box = (box[0] - offset, box[1] + offset)
-            paint_faces(targets, occupied, base, owners, box, part, layer, image, options, owner)
+    if articulated:
+        low, occupied, base, targets = posed_voxels(parsed, image, options)
+    else:
+        low = (
+            np.floor(
+                np.min(
+                    [
+                        np.array(p["position"]) * scale - np.array(p["size"]) * scale / 2
+                        for p in parts
+                    ],
+                    axis=0,
+                )
+            ).astype(int)
+            - offset
+            - 1
+        )
+        high = (
+            np.ceil(
+                np.max(
+                    [
+                        np.array(p["position"]) * scale + np.array(p["size"]) * scale / 2
+                        for p in parts
+                    ],
+                    axis=0,
+                )
+            ).astype(int)
+            + offset
+            + 1
+        )
+        shape = tuple(high - low)
+        base = np.zeros(shape, dtype=bool)
+        targets = np.zeros((*shape, 6, 4), dtype=np.uint8)
+        boxes = []
+        for part in parts:
+            size = np.array(part["size"]) * scale
+            lo = np.rint(np.array(part["position"]) * scale - size / 2).astype(int) - low
+            hi = lo + size
+            boxes.append((lo, hi))
+            if f"{part['id']}:base" in options["layers"]:
+                base[tuple(slice(lo[i], hi[i]) for i in range(3))] = True
+        occupied = base.copy()
+        owners = np.full(shape, -1, dtype=np.int8)
+        for layer in ("base", "overlay"):
+            for owner, (part, box) in enumerate(zip(parts, boxes, strict=True)):
+                if f"{part['id']}:{layer}" not in options["layers"]:
+                    continue
+                if layer == "overlay":
+                    box = (box[0] - offset, box[1] + offset)
+                paint_faces(
+                    targets, occupied, base, owners, box, part, layer, image, options, owner
+                )
     if not occupied.any():
         raise ValueError("没有可生成的皮肤图层，请至少启用一个含像素的图层。")
     blocks, candidates, report, material_targets = match_surface(
@@ -312,8 +332,9 @@ def generate_statue(parsed: dict, palette: Palette, options: dict) -> GeneratedS
     positions = np.argwhere(occupied)
     bounds = [positions.min(axis=0) + low, positions.max(axis=0) + low + 1]
     counts = np.bincount(blocks[occupied], minlength=len(candidates))
-    lookup, atlas = texture_atlas(palette, candidates, counts)
-    mesh = greedy_mesh(blocks, lookup, low)
+    from skin_statue.core.connected_preview import preview_mesh
+
+    atlas, mesh, ctm = preview_mesh(blocks, candidates, palette, low)
     materials = [
         {
             "key": entry["key"],
@@ -340,6 +361,7 @@ def generate_statue(parsed: dict, palette: Palette, options: dict) -> GeneratedS
         "matching": report,
         "atlas": atlas,
         "mesh": mesh,
+        "ctm": ctm,
     }
     LOGGER.debug(
         "Generated statue: scale=%s dimensions=%s blocks=%s quads=%s matching=%s",

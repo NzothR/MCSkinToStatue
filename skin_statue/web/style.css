@@ -181,3 +181,17 @@ h1 { font-size: 22px; font-weight: 450; letter-spacing: 2px; margin: 8px 0 0; }
   .preview-stage .block-editor { max-height: 420px; }
   .preview-stage .candidate-list { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
 }
+/* 页面左右两列分别滚动，滚动侧栏不会改变预览的位置。 */
+@media (min-width: 701px) {
+  html, body { height: 100%; overflow: hidden; }
+  .workspace { height: calc(100dvh - 78px); min-height: 0; overflow: hidden; }
+  .sidebar, .preview-panel { overflow-y: auto; min-height: 0; overscroll-behavior-y: contain; scrollbar-gutter: stable; }
+}
+.pose-angle-row { display: grid; grid-template-columns: 46px repeat(3, minmax(0,1fr)); gap: 4px; align-items: center; margin-top: 8px; font-size: 11px; }
+.pose-angle-row input { width: 100%; min-width: 0; padding: 5px 2px; }
+.held-control { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.held-control select, .held-control label { display: block; margin-top: 8px; }
+.held-control img { width: 40px; height: 40px; object-fit: contain; image-rendering: pixelated; vertical-align: middle; }
+#scene-instance { width: 100%; min-width: 0; }
+#stop-server { white-space: nowrap; font-size: 11px; }
+@media (min-width: 701px) and (max-width: 1000px) { .app-header { gap: 16px; } }

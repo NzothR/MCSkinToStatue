@@ -63,6 +63,7 @@ class Palette:
         self.errors = []
         self.registry_count = 0
         self.context = {}
+        self.items = []
 
     def texture(self, data: bytes) -> dict:
         """按 PNG 内容去重；颜色分析与缩略图共用同一纹理。"""
@@ -140,6 +141,7 @@ class Palette:
             "resource_packs": self.resource_packs,
             "errors": self.errors,
             "context": self.context,
+            "item_variants": len(self.items),
         }
 
     def candidates(self, prefer_connected: bool, excluded) -> list[dict]:

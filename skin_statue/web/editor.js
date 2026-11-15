@@ -252,11 +252,11 @@ export function initEditor(host) {
     $("#project-status").textContent = "正在保存体素、皮肤和候选纹理…";
     try {
       if (draft) {
-        const result = await json(`/api/statue/${id}/draft`, { method: "POST" });
+        const result = await json(`/api/statue/${id}/draft`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(host.workspace()) });
         await refreshDrafts(result.id);
         $("#project-status").textContent = `已保存本地草稿 ${result.id}。`;
       } else {
-        const response = await fetch(`/api/statue/${id}/project`);
+        const response = await fetch(`/api/statue/${id}/project`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(host.workspace()) });
         if (!response.ok) throw new Error((await response.json()).detail);
         host.download(URL.createObjectURL(await response.blob()), `statue-${id.slice(0, 8)}.skinproj`, true);
         $("#project-status").textContent = "工程文件已下载，包含当前编辑结果及继续替换所需纹理。";

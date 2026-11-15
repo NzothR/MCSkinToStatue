@@ -1,6 +1,6 @@
 # Skin Statue · Minecraft 皮肤工作台
 
-本地运行的 Minecraft Java 版皮肤 3D 预览工具。Python 解析皮肤，Three.js 渲染标准站姿，皮肤数据与预览资源均保留在本机。
+本地运行的 Minecraft Java 版皮肤 3D 预览工具。Python 解析皮肤，Three.js 渲染皮肤姿势与手持物品，皮肤数据与预览资源均保留在本机。
 
 当前提供皮肤解析、实例资源扫描、运行时方块索引导入、逐面调色板、可调尺寸的方块雕像生成、双模式 3D 预览、点击选材与整类编辑、草稿与工程文件、正版用户名导入和 `.schematic` 结构导出。辅助模组从 GTNH 客户端导出真实注册信息与已加载纹理。
 
@@ -14,12 +14,12 @@ python -m pip install -r requirements.txt
 python run.py
 ```
 
-打开 [本地预览界面](http://127.0.0.1:8765)。也可以双击项目根目录的 `start.bat`，该脚本通过 Conda 使用 `mc_env`。终端按 `Ctrl+C` 停止服务。
+打开 [本地预览界面](http://127.0.0.1:8765)。也可以双击项目根目录的 `start.bat`，该脚本通过 Conda 使用 `mc_env`。页面右上角点击“停止服务”会请求当前 Python 服务正常退出，正在处理的任务结束后进程关闭；页面显示退出提示。终端也可按 `Ctrl+C` 停止服务。该按钮需要通过 `run.py`／`start.bat` 启动，外部 Uvicorn 托管会提示使用对应启动方式。
 
 ```powershell
 python run.py --port 8766
 python run.py --debug
-python run.py --index block-index-20261115-173345-890.zip
+python run.py --index block-index-20261115-210250-154.zip
 ```
 
 `--port` 修改监听端口；`--debug` 开启解析结果、UV、生成统计和服务调试日志，默认关闭；`--index` 在启动时载入指定运行时索引，界面自动使用唯一预载的调色板。修改启动参数或 Python 代码后重启服务，修改界面文件后刷新浏览器。皮肤预览中的模型和图层控制立即生效；修改雕像生成参数后点击重新生成。
@@ -72,6 +72,42 @@ Three.js 0.170.0 和 OrbitControls 已随项目保存，运行时无需访问 CD
 
 使用的官方端点为 `https://api.mojang.com/users/profiles/minecraft/{username}`、`https://sessionserver.mojang.com/session/minecraft/profile/{uuid}` 与 `https://textures.minecraft.net/texture/{hash}`。纹理档案结构同时依据构建依赖中的 Mojang Authlib 1.5.21 `YggdrasilMinecraftSessionService` 字节码核对。
 
+## 独立滚动、姿势和左右手持物
+
+桌面布局的左侧参数栏与右侧预览区分别滚动。方块编辑面板独立滚动，操作候选时可以继续观察雕像。小屏保留上下布局。
+
+“姿势”提供标准站立以及参考基岩版盔甲架的敬礼、英雄、挥舞、僵尸、康康舞等静态预设；展开后可分别编辑头、躯干、左右臂、左右腿的 X/Y/Z 旋转，范围 −180～180 度。这里保存静态姿势，不播放循环动画。躯干带动肢体关节，左右手持物绑定对应手臂；切换姿势保留装备。模型采用 Y 向上、+Z 正面、+X 角色左侧。“重置”视角会适配当前姿势和物品的包围盒。
+
+先在“左右手持物”填写实例路径，点击“只读载入物品与连接纹理”。从原版图标选择、从新版索引按本地化名字／注册名／数字 ID 搜索，或者给每只手单独导入 PNG。允许右手、左手、双手同时持物，左右手可以使用不同物品。PNG 最大 256×256、2 MB，最多按 32×32 采样。物品相对各自握持点提供 XYZ 位移（−64～64 皮肤像素）、XYZ 旋转、0.1～4 倍缩放和 0～8 皮肤像素的厚度。厚度 0 在皮肤中显示双面薄片，生成时按世界网格覆盖至少一格，斜面会产生台阶。立方体方块保留完整六面和立方体厚度，调整大小使用缩放；自定义立方体图像要求不透明。
+
+持握默认变换依据 MC 1.7.10 `RenderPlayer` 与 `ItemRenderer`，区分工具、普通物品、弓和立方体方块，左手镜像，并校正 Alex 较细手臂的半像素偏移；用户偏移和旋转围绕握持点应用。物品多层图标按导出时的逐层染色合成。自定义装备渲染器、机器等复杂模型用图标近似并在名称处标明；完整不透明方块使用索引真实六面。这里不模拟拉弓过程、附魔光效或复杂模组的装备模型。
+
+姿势、位置、旋转、缩放、厚度只即时更新皮肤。已有雕像始终保留原体素；点击重新生成后，使用同源矩阵对旋转部位与手持物品逆采样，统一进行颜色匹配、空心处理、预览与结构导出。“站立高度基准”表示 32 像素站立角色的缩放；摆姿势后的实际尺寸以包围盒为准。任意姿势体素范围上限为 1200 万格，超过时提示降低高度。工程同时保存已生成雕像与当前尚未生成的皮肤姿势／持物编辑，重开后分别恢复。
+
+## 连接纹理预览
+
+“连接纹理预览”默认开。读取实例的有效 `.png.mcmeta` 中 `myctmlib.connection` 以及 `config/MyCTMLib.cfg` 的图标列表，按启用资源包优先级加载连接图。只向资源包栈相同的调色板补充连接图，读取过程不修改游戏文件。预览支持 MyCTMLib 的四象限 4×4 布局，依据实际同面图标的四邻及对角拼接，基础图的四角用于不连接区域。可关闭该选项查看基础纹理。MCPatcher／OptiFine 等其他方法及未载入的连接图保留基础纹理，预览下方报告受影响的材料数。动画连接图取首帧。
+
+已载入的连接图、运行时物品元数据及其 PNG 一并保存到工程；重开工程可离线继续显示和选材。也可启动时直接加载资源：
+
+```powershell
+python run.py --index block-index-20261115-210250-154.zip --instance '实例的 .minecraft 路径'
+```
+
+## 运行时物品与名称映射
+
+辅助模组 0.1.3 在原有方块索引后增加物品阶段，遍历真实物品注册表与创造栏变体，记录物品数字 ID、Damage、NBT、本地化名称、语言键、渲染类型、逐层图标与颜色。方块和物品图集分别读取，避免同名 sprite 指向错误图集。不可捕获的图标保留名称与具体错误，不伪造图像。没有创造栏条目的注册物品额外记录 Damage 0 探测项并标记未获创造栏确认。方块 Metadata 仍是 0～15；物品 Damage 按运行值保存，不套用方块范围。
+
+请替换旧辅助模组 JAR，重启游戏再导出；无需安装第二个模组。旧 0.1.0～0.1.2 索引继续用于方块、姿势和原版图标／自定义 PNG 持物；完整模组物品名称及图标使用 0.1.3 新 ZIP。工具内支持物品搜索分页，每页最多 200 项，并可点击“物品名称映射”下载 JSON。
+
+也提供只读小脚本，把 ZIP 中的真实映射提取为 JSON，不推测注册名与语言键的关系：
+
+```powershell
+python tools/export_item_map.py '导出的 block-index ZIP 路径' --output output/item-mapping.json
+```
+
+只有 Python 标准库依赖。旧 ZIP 可提取已有方块映射，并提示缺少物品数据。
+
 ## 导出
 
 | 选项 | 内容 |
@@ -104,11 +140,11 @@ PrismLauncher 的共享 1.7.10 客户端 JAR 会自动定位；其他目录布�
 
 重力方块始终禁止用于匹配和雕像，包括沙、砂砾、混凝土粉末、铁砧、龙蛋及已确认的模组重力方块。0.1.1 辅助模组增加运行时 `gravity_affected` 和 `class_hierarchy`；旧索引使用核对过继承链的兼容类名，当前用户索引无需重新导出即可排除混凝土粉末等。没有通过数字 ID 或方块名中是否包含 sand/gravity 等字样推测重力属性。
 
-Modernity 等包的 CTM 规则会保留并按 `matchBlocks`、`matchTiles`、数字 ID／Metadata 区间和纹理名筛出相关候选。新索引还记录 `myctmlib.connection` 纹理元数据；旧索引中由 MyCTMLib 创建的 sprite 保守归为连接纹理候选。连接环境、特殊渲染、多层贴图、着色器和动态机器外观需要专门适配；当前预览显示基础纹理，没有复现游戏的连接选片。存在服务器资源包时，运行时像素仍含其覆盖，但相关外部规则待确认，默认候选会排除。
+Modernity 等包的 CTM 规则会保留并按 `matchBlocks`、`matchTiles`、数字 ID／Metadata 区间和纹理名筛出相关候选。新索引还记录 `myctmlib.connection` 纹理元数据；旧索引中由 MyCTMLib 创建的 sprite 保守归为连接纹理候选。连接纹理预览默认开启，已实现 MyCTMLib 4×4 连接图的四象限选片；需要通过“只读载入物品与连接纹理”提供与索引相同资源包栈的实例。其他连接规则、特殊渲染、着色器和动态机器外观仍按基础纹理显示，面板报告缺少支持的材料。存在服务器资源包时，运行时像素仍含其覆盖，但相关外部规则待确认，默认候选会排除。
 
 ## 获取 GTNH 运行时索引
 
-辅助模组源码、安装和构建说明见 [block-exporter/README.md](block-exporter/README.md)。当前构建产物位于 `output/skinstatueindex-0.1.2.jar`。
+辅助模组源码、安装和构建说明见 [block-exporter/README.md](block-exporter/README.md)。当前构建产物位于 `output/skinstatueindex-0.1.3.jar`。
 
 1. 关闭游戏，把 JAR 放入 GTNH 2.9.0 客户端实例的 `.minecraft/mods/`，然后重新启动游戏。
 2. 选择实际使用的资源包并进入世界。默认等待 60 个客户端 tick 后自动导出一次；保持在世界中，完成后聊天栏显示完整路径。
@@ -144,7 +180,7 @@ Modernity 等包的 CTM 规则会保留并按 `matchBlocks`、`matchTiles`、数
 
 预览从实际匹配后的方块数组提取可见面，剔除相邻不透明体素内面，再贪心合并同方向同纹理矩形。服务端仍以 PNG 图集传输纹理，浏览器把每张贴图拆成独立的 WebGL 2 纹理数组层，以 `flat` 整数索引固定每个面的材质，不再在大图集中手动定位与重复 UV。每 128 层为一个批次，合并后的矩形通过纹理自身的 RepeatWrapping 每格重复贴图。每张预览纹理最高使用 64×64 像素，纹理较多时降低采样尺寸以保持传输图集不超过 4096；原始索引纹理不被修改。“方块代表色”可查看纯色效果，“原始颜色”可关闭预览方向明暗。
 
-连接纹理偏好只影响材料选择；游戏根据相邻同类方块及资源包规则产生连接效果，浏览器仍显示每个候选的基础贴图。它可以减少部分接缝，跨不同材料、不同 Metadata 或不满足连接规则的边界不会因此自动消失。
+“优先连接纹理”影响材料选择，“连接纹理预览”仅影响显示，两者独立。预览按真实体素邻接及同一面图标身份连接，使用相邻四方向和满足边相连的四个对角选择四象限。不同材料若引用相同图标，也按 MyCTMLib 的图标规则连接。切换显示不重新生成、不修改方块 ID 或结构。其他 CTM 方法显示基础图并报告。
 
 不同高度以相同屏幕玩家比例显示，实际尺寸、体素数、第二层方块数、材料数量和色差显示在“雕像材料与匹配统计”中；雕像模式地面网格间距对应一格。现有 PNG 功能继续用于皮肤和视角截图。
 
@@ -204,6 +240,8 @@ skin_statue/core/skin.py    UV、旧皮肤转换、图层解析、PNG 编码
 skin_statue/core/palette.py 逐面颜色、候选筛选和单色匹配
 skin_statue/core/statue.py  整数体素、多面匹配、空心处理、贪心网格和图集
 skin_statue/core/editing.py 候选排序、整类替换、自包含工程读写
+skin_statue/core/pose.py / posed_voxels.py 关节、持握变换和旋转体素采样
+skin_statue/core/connected_preview.py MyCTMLib 邻接选片与预览材质
 skin_statue/core/schematic.py Alpha Schematic、扩展 ID、I 点偏移、读回校验和诊断 ZIP
 skin_statue/resources/      实例扫描、CTM 规则、运行时注册表导入
 skin_statue/main.py         FastAPI 解析接口和静态资源服务
@@ -226,9 +264,10 @@ node --check skin_statue/web/app.js
 node --check skin_statue/web/resources.js
 node --check skin_statue/web/statue.js
 node --check skin_statue/web/editor.js
+node --check skin_statue/web/poses.js
 ```
 
-按项目 skill，当前开发执行构建和静态检查，不运行自动化或冒烟测试。皮肤双层预览、辅助模组导出、雕像预览和结构粘贴已由用户实际使用。本次新增功能未运行自动化、冒烟或游戏内容测试。人工验收：点击正面／侧面／顶面的单个方块，确认位置与 ID；使用候选前后切换、下一批和指定搜索替换，查看整类数量、撤销／重做及导出后的游戏结果；分别保存草稿、下载工程，重启服务并打开后继续替换；用自己的 Java 用户名查询皮肤，检查手臂模型。
+按项目 skill，当前开发执行构建和静态检查，不运行自动化或冒烟测试。皮肤双层预览、辅助模组导出、雕像预览和结构粘贴已由用户实际使用。本次新增功能未运行自动化、冒烟或游戏内容测试。本轮人工验收：左右区域分别滚动；在皮肤模式切换姿势并分别给两手装备物品，调整 XYZ 位移／旋转、缩放和厚度，确认旧雕像保持不变，重新生成后核对体素形状及结构粘贴；保存工程并重开，核对未生成的持物调整和原雕像分别保留；开关 CTM 预览，对照游戏的相邻及对角连接；用 0.1.3 模组重新导出并导入，核对模组物品变体、名称、数字 ID、多层染色和方块六面；测试结束点击“停止服务”，确认 Python 进程退出。
 
 资源接口：
 
@@ -254,6 +293,13 @@ node --check skin_statue/web/editor.js
 | `POST /api/projects/open` | multipart `file`；打开工程 |
 | `POST /api/statue/{id}/draft` | 在项目内持久保存草稿 |
 | `GET /api/drafts` / `POST /api/drafts/{id}/open` | 列出草稿／打开草稿 |
+| `POST /api/shutdown` | 响应后请求当前 Python／Uvicorn 服务正常退出 |
+| `GET /api/poses` / `POST /api/pose` | 静态姿势预设／同源关节与持物矩阵 |
+| `GET/POST /api/scene/resources` | 当前资源概要／只读加载实例图标与连接图 |
+| `GET /api/scene/item` | `key`、可选 `palette_id`；实际物品图标与持握类型 |
+| `GET /api/palettes/{id}/items` | `search`、`offset`、`limit`；本地化物品搜索 |
+| `GET /api/palettes/{id}/items/export` | 下载物品、方块名称映射 |
+| `GET /api/statue/{id}/render` | `connected=true/false`；仅刷新预览纹理 |
 | `GET /api/statue/capabilities` | 返回生成、预览、导出模式及支持的高度 |
 
 每张不同纹理只分析一次，时间与纹理像素总量线性相关。索引状态建立与状态／表面数量线性相关；单色匹配遍历可用候选，时间 O(P)。索引 ZIP 上限 128 MB，总展开大小上限 512 MB，直接读取且不解压到游戏目录。
@@ -269,3 +315,7 @@ node --check skin_statue/web/editor.js
 Three.js 与 OrbitControls 使用 MIT 许可证，版本与资源来源见 [第三方说明](skin_statue/web/vendor/README.md)，许可证随资源保留。内置 `demo.png` 为本项目绘制的示例。
 
 结构编码依据 [GTNH WorldEdit SchematicWriter](https://github.com/GTNewHorizons/worldedit-gtnh/blob/master/src/main/java/com/sk89q/worldedit/extent/clipboard/io/SchematicWriter.java)、[SchematicReader](https://github.com/GTNewHorizons/worldedit-gtnh/blob/master/src/main/java/com/sk89q/worldedit/extent/clipboard/io/SchematicReader.java) 与 [GTNH Schematica SchematicAlpha](https://github.com/GTNewHorizons/Schematica/blob/master/src/main/java/com/github/lunatrius/schematica/world/schematic/SchematicAlpha.java)，并只读检查了用户实例已安装 JAR 的对应读取器。NBT 由 nbtlib 编码和读回。
+
+姿势角度参考 [Mojang Bedrock Samples](https://github.com/Mojang/bedrock-samples/blob/main/resource_pack/animations/armor_stand.animation.json)，仅提取静态关节角度。MyCTMLib 连接索引依据 [Textures](https://github.com/wohaopa/MyCTMLib/blob/master/src/main/java/com/github/wohaopa/MyCTMLib/Textures.java) 与 [CTMIconManager](https://github.com/wohaopa/MyCTMLib/blob/master/src/main/java/com/github/wohaopa/MyCTMLib/CTMIconManager.java)；MIT 许可保存在 `skin_statue/third_party/MyCTMLib-LICENSE.txt`。持物变换只读核对构建目录中的 Minecraft 1.7.10 客户端源码，未复制游戏贴图资产。
+
+旋转体素化按部位包围盒分片逆采样，时间与扫描体素数线性相关，目标颜色缓冲空间 O(V)，临时坐标按 Y 轴分片处理。CTM 邻接检查 O(V)，只对实际使用的连接组合生成预览图；物品 PNG 逐内容去重，名称映射保留真实变体和 NBT。资源批量读取期间复用 ZIP 目录，完成后关闭文件。

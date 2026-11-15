@@ -205,6 +205,24 @@ def import_runtime_index(data: bytes) -> Palette:
                         faces,
                         state_reasons,
                     )
+            for index, item in enumerate(root.get("items", [])):
+                layers = []
+                for layer in item["layers"]:
+                    descriptor = layer["texture"]
+                    path = descriptor["path"]
+                    if path not in texture_cache:
+                        texture_cache[path] = palette.texture(archive.read(path))
+                    layers.append(
+                        {"texture_id": texture_cache[path]["texture_id"], "tint": layer["tint"]}
+                    )
+                palette.items.append(
+                    {
+                        **{k: v for k, v in item.items() if k != "layers"},
+                        "key": f"{item['registry_name']}@{item['damage']}#{index}",
+                        "layers": layers,
+                    }
+                )
+            palette.context["item_registry_count"] = root.get("item_registry_count", 0)
     except (BadZipFile, KeyError, json.JSONDecodeError, TypeError) as exc:
         raise ValueError(f"索引 ZIP 的结构不完整：{exc}") from exc
     return palette

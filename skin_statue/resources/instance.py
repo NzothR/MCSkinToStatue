@@ -3,8 +3,10 @@
 import hashlib
 import json
 import logging
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from threading import RLock
 from zipfile import BadZipFile, ZipFile
 
 LOGGER = logging.getLogger(__name__)
@@ -43,6 +45,8 @@ class InstanceResources:
     def __init__(self, directory: str, vanilla_jar: str | None = None):
         """读取实例设置和资源目录，所有修改均由调用方在项目内保存。"""
         self.root = Path(directory).expanduser().resolve()
+        self._archives = None
+        self._read_lock = RLock()
         if not (self.root / "mods").is_dir() or not (self.root / "options.txt").is_file():
             raise ValueError("请选择包含 mods 和 options.txt 的 .minecraft 实例目录。")
         options = (self.root / "options.txt").read_text(encoding="utf-8")
@@ -82,15 +86,25 @@ class InstanceResources:
                     raise ValueError(f"无法读取启用的资源包 {source.path.name}：{exc}") from exc
                 self.errors.append({"source": str(source.path), "error": str(exc)})
                 continue
+            rule_bytes = {}
+            if source.kind == "pack" and source.path.is_file():
+                with ZipFile(source.path) as archive:
+                    rule_bytes = {
+                        name: archive.read(name)
+                        for name in entries
+                        if name.endswith(".properties") and "/ctm/" in name
+                    }
             for name in entries:
                 if (
                     name.startswith("assets/")
-                    and name.endswith(".png")
-                    and "/textures/blocks/" in name
+                    and name.endswith((".png", ".png.mcmeta"))
+                    and ("/textures/blocks/" in name or "/textures/items/" in name)
                 ):
                     self.providers.setdefault(name, []).append(source)
                 if source.kind == "pack" and name.endswith(".properties") and "/ctm/" in name:
-                    text = source.read(name).decode("latin-1")
+                    text = (
+                        rule_bytes[name] if source.path.is_file() else source.read(name)
+                    ).decode("latin-1")
                     properties = {}
                     for line in text.splitlines():
                         line = line.strip()
@@ -132,7 +146,26 @@ class InstanceResources:
             raise ValueError(f"找不到纹理：{name}")
         else:
             raise ValueError(f"多个基础资源提供同一纹理，请使用运行时索引确认：{name}")
+        if self._archives is not None and source.path.is_file():
+            if source.path not in self._archives:
+                self._archives[source.path] = ZipFile(source.path)
+            return self._archives[source.path].read(name), str(source.path)
         return source.read(name), str(source.path)
+
+    @contextmanager
+    def reading(self):
+        """批量读取期间复用 ZIP 中央目录，用完关闭，避免每张物品图都重新打开大资源包。"""
+        with self._read_lock:
+            if self._archives is not None:
+                yield
+                return
+            self._archives = {}
+            try:
+                yield
+            finally:
+                for archive in self._archives.values():
+                    archive.close()
+                self._archives = None
 
     def summary(self) -> dict:
         """输出扫描统计，强调纹理清单和真实注册表各自的来源。"""
@@ -142,12 +175,18 @@ class InstanceResources:
             "vanilla_jar": str(self.vanilla) if self.vanilla else None,
             "resource_packs": self.packs,
             "sources": len(self.sources),
-            "textures": len(self.providers),
+            "textures": sum(
+                n.endswith(".png") and "/textures/blocks/" in n for n in self.providers
+            ),
             "overridden_textures": sum(
-                any(s.kind == "pack" for s in p) and len(p) > 1 for p in self.providers.values()
+                any(s.kind == "pack" for s in p) and len(p) > 1
+                for n, p in self.providers.items()
+                if n.endswith(".png") and "/textures/blocks/" in n
             ),
             "ambiguous_base_textures": sum(
-                len(p) > 1 and not any(s.kind == "pack" for s in p) for p in self.providers.values()
+                len(p) > 1 and not any(s.kind == "pack" for s in p)
+                for n, p in self.providers.items()
+                if n.endswith(".png") and "/textures/blocks/" in n
             ),
             "contextual_pack_rules": len(self.ctm_files),
             "errors": self.errors,

@@ -5,12 +5,13 @@ import hashlib
 import json
 import logging
 from collections import OrderedDict
+from dataclasses import replace as replace_snapshot
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
 from uuid import uuid4
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -21,22 +22,108 @@ from skin_statue.core.editing import (
     open_project,
     project_bytes,
     ranked_candidates,
+    rebuild,
     replace_material,
 )
 from skin_statue.core.palette import Palette
+from skin_statue.core.pose import pose_preview
 from skin_statue.core.schematic import PROFILES, export_bundle, placement, schematic_bytes
-from skin_statue.core.skin import parse_skin
+from skin_statue.core.skin import PARTS, parse_skin
 from skin_statue.core.statue import GeneratedStatue, generate_statue
 from skin_statue.resources.instance import InstanceResources
 from skin_statue.resources.java_skin import fetch_skin
 from skin_statue.resources.registry import import_runtime_index, vanilla_palette
+from skin_statue.resources.scene_resources import attach_connections, item_catalog, runtime_item
 
 WEB = Path(__file__).parent / "web"
 app = FastAPI(title="Skin Statue · 皮肤预览", docs_url=None, redoc_url=None)
+app.state.server = None
 PALETTES: dict[str, Palette] = {}
 STATUES: OrderedDict[str, GeneratedStatue] = OrderedDict()
 PROJECT = WEB.parents[1]
 DRAFTS = PROJECT / "drafts"
+SCENE_RESOURCES = {}
+Angle = Annotated[float, Field(ge=-180, le=180)]
+Offset = Annotated[float, Field(ge=-64, le=64)]
+
+
+@app.post("/api/shutdown")
+async def shutdown(background: BackgroundTasks) -> dict:
+    """响应发出后停止当前 run.py 的 Uvicorn 服务，使 Python 进程正常退出。"""
+    if app.state.server is None:
+        raise HTTPException(409, "请通过 run.py 或 start.bat 启动服务以使用页面退出按钮。")
+    background.add_task(setattr, app.state.server, "should_exit", True)
+    return {"status": "stopping"}
+
+
+class HeldItem(BaseModel):
+    """纹理与持握类型分别保存，左右手可以独立配置。"""
+
+    image: str = Field(max_length=3 * 1024 * 1024)
+    kind: Literal["tool", "flat", "bow", "block"] = "tool"
+    block_faces: dict[str, str] = Field(default_factory=dict)
+    name: str = "自定义物品"
+    offset: tuple[Offset, Offset, Offset] = (0, 0, 0)
+    rotation: tuple[Angle, Angle, Angle] = (0, 0, 0)
+    scale: float = Field(default=1, ge=0.1, le=4)
+    thickness: float = Field(default=0, ge=0, le=8)
+    rotate_around: bool = False
+
+
+PartName = Literal["head", "body", "left_arm", "right_arm", "left_leg", "right_leg"]
+
+
+class SceneOptions(BaseModel):
+    """静态姿势和独立持物配置；角度单位为度。"""
+
+    pose: dict[PartName, tuple[Angle, Angle, Angle]] = Field(default_factory=dict)
+    held: dict[Literal["left", "right"], HeldItem] = Field(default_factory=dict)
+
+
+class PoseRequest(SceneOptions):
+    """皮肤即时姿势预览所需的几何信息。"""
+
+    model: Literal["steve", "alex"] = "steve"
+    alpha_threshold: int = Field(default=128, ge=1, le=255)
+
+
+@app.get("/api/poses")
+def pose_presets() -> dict:
+    """返回参考基岩版盔甲架的静态预设，标准站立始终可恢复。"""
+    return json.loads((WEB.parent / "poses.json").read_text(encoding="utf8"))
+
+
+@app.post("/api/pose")
+async def preview_pose(request: PoseRequest) -> dict:
+    """返回与雕像生成共用的关节及持握矩阵。"""
+    parts = [
+        {
+            "id": key,
+            "size": (3, 12, 4) if "arm" in key and request.model == "alex" else size,
+            "position": ((-5.5 if key == "right_arm" else 5.5), 18, 0)
+            if "arm" in key and request.model == "alex"
+            else position,
+        }
+        for key, _, size, position, _, _ in PARTS
+    ]
+    return await run_in_threadpool(pose_preview, {"parts": parts}, request.model_dump())
+
+
+@app.get("/api/statue/{identity}/render")
+async def render_statue(identity: str, connected: bool = True) -> dict:
+    """只切换连接纹理显示，体素、材料与导出保持当前编辑结果。"""
+    from skin_statue.core.connected_preview import preview_mesh
+
+    statue = get_statue(identity)
+    atlas, mesh, ctm = await run_in_threadpool(
+        preview_mesh,
+        statue.state_indices,
+        statue.states,
+        get_palette(statue.preview["palette_id"]),
+        statue.preview["bounds"][0],
+        connected,
+    )
+    return {"atlas": atlas, "mesh": mesh, "ctm": ctm}
 
 
 class Replacement(BaseModel):
@@ -140,9 +227,14 @@ async def replace(identity: str, request: Replacement) -> dict:
 
 
 @app.get("/api/statue/{identity}/project")
-async def save_project(identity: str) -> Response:
+@app.post("/api/statue/{identity}/project")
+async def save_project(identity: str, workspace: SceneOptions | None = None) -> Response:
     """下载自带纹理与皮肤的工程文件。"""
     statue = get_statue(identity)
+    if workspace is not None:
+        statue = replace_snapshot(
+            statue, preview={**statue.preview, "workspace": workspace.model_dump()}
+        )
     data = await run_in_threadpool(project_bytes, statue, get_palette(statue.preview["palette_id"]))
     return Response(
         data,
@@ -154,6 +246,8 @@ async def save_project(identity: str) -> Response:
 def restore_project(data: bytes) -> dict:
     """恢复工程并登记自带调色板，供预览、替换与重新生成共用。"""
     statue, palette = open_project(data)
+    attach_scene_resources(palette)
+    rebuild(statue, palette)
     PALETTES[palette.id] = palette
     return {
         "statue": remember(statue),
@@ -186,9 +280,13 @@ def drafts() -> dict:
 
 
 @app.post("/api/statue/{identity}/draft")
-async def save_draft(identity: str) -> dict:
+async def save_draft(identity: str, workspace: SceneOptions | None = None) -> dict:
     """每次保存独立草稿，服务重启后仍可打开。"""
     statue = get_statue(identity)
+    if workspace is not None:
+        statue = replace_snapshot(
+            statue, preview={**statue.preview, "workspace": workspace.model_dump()}
+        )
 
     def save() -> dict:
         data = project_bytes(statue, get_palette(statue.preview["palette_id"]))
@@ -212,7 +310,7 @@ async def load_draft(identity: str) -> dict:
     return await run_in_threadpool(lambda: restore_project(files[identity].read_bytes()))
 
 
-class StatueOptions(BaseModel):
+class StatueOptions(SceneOptions):
     """与实际体素分辨率关联的生成参数。"""
 
     palette_id: str
@@ -233,6 +331,123 @@ class ScanRequest(BaseModel):
 
     directory: str = Field(min_length=1)
     vanilla_jar: str | None = None
+
+
+def attach_scene_resources(palette):
+    """仅从相同资源包栈补充连接图，工程自带的其他材质不会被覆盖。"""
+    resources = SCENE_RESOURCES.get("resources")
+    if resources and palette.resource_packs == resources.packs:
+        with resources.reading():
+            attach_connections(palette, resources)
+
+
+def load_scene_resources(directory, vanilla_jar=None):
+    """只读加载实例物品与连接图，供正在编辑和后续导入的调色板使用。"""
+    resources = InstanceResources(directory, vanilla_jar)
+    with resources.reading():
+        items = item_catalog(resources)
+        SCENE_RESOURCES.update(resources=resources, items=items)
+        for palette in PALETTES.values():
+            attach_scene_resources(palette)
+    return scene_catalog()
+
+
+@app.get("/api/scene/resources")
+def scene_catalog() -> dict:
+    """列出已加载的物品和实例路径，重开网页无需重复扫描。"""
+    resources = SCENE_RESOURCES.get("resources")
+    return {
+        "directory": str(resources.root) if resources else "",
+        "items": [
+            {k: v for k, v in item.items() if k != "image"}
+            for item in SCENE_RESOURCES.get("items", {}).values()
+        ],
+        "connected_textures": sum(
+            bool(f.get("ctm_texture_id"))
+            for p in PALETTES.values()
+            for e in p.entries
+            for f in e["faces"].values()
+        ),
+    }
+
+
+@app.post("/api/scene/resources")
+async def scene_resources(request: ScanRequest) -> dict:
+    """读取玩家选定实例中的启用资源包和原版物品。"""
+    return await run_in_threadpool(load_scene_resources, request.directory, request.vanilla_jar)
+
+
+@app.get("/api/scene/item")
+def scene_item(key: str, palette_id: str | None = None) -> dict:
+    """返回应用资源包覆盖后的物品纹理。"""
+    if palette_id:
+        palette = get_palette(palette_id)
+        entry = next((e for e in palette.items if e["key"] == key), None)
+        if entry:
+            return runtime_item(palette, entry)
+    items = SCENE_RESOURCES.get("items", {})
+    if key not in items:
+        raise HTTPException(404, "请先从实例载入物品纹理。")
+    return items[key]
+
+
+@app.get("/api/palettes/{identity}/items")
+def palette_items(
+    identity: str,
+    search: str = "",
+    offset: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=200),
+) -> dict:
+    """按本地化名称、注册 ID、数字 ID 查找真实物品变体，分页控制浏览器开销。"""
+    palette = get_palette(identity)
+    needle = search.casefold()
+    rows = [
+        e
+        for e in palette.items
+        if needle
+        in (e["key"] + " " + str(e["numeric_id"]) + " " + (e.get("display_name") or "")).casefold()
+    ]
+    return {
+        "items": [
+            {
+                "id": e["key"],
+                "label": f"{e.get('display_name') or e['registry_name']} · {e['registry_name']} · ID {e['numeric_id']}:{e['damage']}"
+                + (" · 图标未解析" if e["status"] != "captured" else ""),
+                "status": e["status"],
+            }
+            for e in rows[offset : offset + limit]
+        ],
+        "total": len(rows),
+        "offset": offset,
+        "runtime": bool(palette.items),
+    }
+
+
+@app.get("/api/palettes/{identity}/items/export")
+def export_item_mapping(identity: str) -> Response:
+    """下载物品与方块的名称映射，图标 PNG 保留在原始索引。"""
+    palette = get_palette(identity)
+    return Response(
+        json.dumps(
+            {
+                "format": "skin-statue-item-map",
+                "schema_version": 1,
+                "context": palette.context,
+                "items": palette.items,
+                "blocks": [
+                    {
+                        k: e.get(k)
+                        for k in ("key", "registry_name", "numeric_id", "metadata", "display_name")
+                    }
+                    for e in palette.entries
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="item-map-{identity}.json"'},
+    )
 
 
 class MatchRequest(BaseModel):
@@ -284,6 +499,7 @@ async def scan_instance(request: ScanRequest) -> dict:
     def scan() -> dict:
         resources = InstanceResources(request.directory, request.vanilla_jar)
         palette = vanilla_palette(resources)
+        attach_scene_resources(palette)
         PALETTES[palette.id] = palette
         return {"scan": resources.summary(), "palette": palette.summary()}
 
@@ -304,6 +520,7 @@ async def load_index(file: Annotated[UploadFile, File()]) -> dict:
             palette = await run_in_threadpool(import_runtime_index, data)
         except (ValueError, OSError) as exc:
             raise HTTPException(422, str(exc)) from exc
+        attach_scene_resources(palette)
         PALETTES[palette.id] = palette
         return {"palette": palette.summary()}
     finally:
@@ -339,6 +556,7 @@ async def load_local_index(filename: str) -> dict:
         identity = hashlib.sha256(data).hexdigest()[:20]
         if identity not in PALETTES:
             PALETTES[identity] = import_runtime_index(data)
+            attach_scene_resources(PALETTES[identity])
         return {"palette": PALETTES[identity].summary()}
 
     try:

@@ -13,6 +13,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765, help="本地端口，默认 8765")
     parser.add_argument("--debug", action="store_true", help="开启解析和服务调试日志")
     parser.add_argument("--index", type=Path, help="启动时载入指定的运行时方块索引 ZIP")
+    parser.add_argument("--instance", type=Path, help="只读载入实例的手持物品与连接纹理资源")
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.DEBUG if args.debug else logging.INFO,
@@ -32,12 +33,22 @@ def main() -> None:
             len(palette.entries),
             sum(entry["eligible"] for entry in palette.entries),
         )
-    uvicorn.run(
-        app,
-        host="127.0.0.1",
-        port=args.port,
-        log_level="debug" if args.debug else "info",
+    if args.instance:
+        from skin_statue.main import load_scene_resources
+
+        result = load_scene_resources(str(args.instance))
+        logging.info(
+            "Loaded scene resources: items=%s connected faces=%s",
+            len(result["items"]),
+            result["connected_textures"],
+        )
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app, host="127.0.0.1", port=args.port, log_level="debug" if args.debug else "info"
+        )
     )
+    app.state.server = server
+    server.run()
 
 
 if __name__ == "__main__":

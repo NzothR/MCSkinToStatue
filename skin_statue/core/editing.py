@@ -9,9 +9,10 @@ from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 import numpy as np
 
-from skin_statue.core.palette import FACES, Palette, rgb_to_lab
+from skin_statue.core.connected_preview import preview_mesh
+from skin_statue.core.palette import FACES, Palette, analyze_texture, rgb_to_lab
 from skin_statue.core.skin import parse_skin
-from skin_statue.core.statue import GeneratedStatue, greedy_mesh, texture_atlas
+from skin_statue.core.statue import GeneratedStatue
 
 LOGGER = logging.getLogger(__name__)
 
@@ -20,9 +21,10 @@ def rebuild(statue: GeneratedStatue, palette: Palette) -> None:
     """从实际体素刷新纹理、合并网格和材料数量，编辑不再执行颜色映射。"""
     blocks = statue.state_indices
     counts = np.bincount(blocks[blocks >= 0], minlength=len(statue.states))
-    lookup, atlas = texture_atlas(palette, statue.states, counts)
+    atlas, mesh, ctm = preview_mesh(blocks, statue.states, palette, statue.preview["bounds"][0])
     statue.preview["atlas"] = atlas
-    statue.preview["mesh"] = greedy_mesh(blocks, lookup, statue.preview["bounds"][0])
+    statue.preview["mesh"] = mesh
+    statue.preview["ctm"] = ctm
     statue.preview["materials"] = sorted(
         [
             {
@@ -130,6 +132,13 @@ def project_bytes(statue: GeneratedStatue, palette: Palette) -> bytes:
     entries = {e["key"]: e for e in palette.candidates(True, set())}
     entries.update({e["key"]: e for e in statue.states})
     textures = {face["texture_id"] for e in entries.values() for face in e["faces"].values()}
+    textures.update(
+        face["ctm_texture_id"]
+        for e in entries.values()
+        for face in e["faces"].values()
+        if face.get("ctm_texture_id")
+    )
+    textures.update(layer["texture_id"] for item in palette.items for layer in item["layers"])
     manifest = {
         "format": "skin-statue-project",
         "schema_version": 1,
@@ -145,6 +154,7 @@ def project_bytes(statue: GeneratedStatue, palette: Palette) -> bytes:
             "context": palette.context,
             "registry_count": palette.registry_count,
             "entries": list(entries.values()),
+            "items": palette.items,
         },
     }
     output = BytesIO()
@@ -170,19 +180,35 @@ def open_project(data: bytes) -> tuple[GeneratedStatue, Palette]:
             info = root["palette"]
             palette = Palette(info["source"], identity, info["resource_packs"])
             palette.entries = info["entries"]
+            palette.items = info.get("items", [])
             palette.context = info["context"]
             palette.registry_count = info["registry_count"]
             by_key = {e["key"]: e for e in palette.entries}
             states = [by_key[e] for e in root["states"]]
             texture_ids = {f["texture_id"] for e in palette.entries for f in e["faces"].values()}
+            texture_ids.update(
+                f["ctm_texture_id"]
+                for e in palette.entries
+                for f in e["faces"].values()
+                if f.get("ctm_texture_id")
+            )
+            texture_ids.update(
+                layer["texture_id"] for item in palette.items for layer in item["layers"]
+            )
             for key in texture_ids:
                 palette.textures[key] = archive.read(f"textures/{key}.png")
             palette.stats = {
                 f["texture_id"]: f for e in palette.entries for f in e["faces"].values()
             }
+            for key in texture_ids - palette.stats.keys():
+                palette.stats[key] = {"texture_id": key, **analyze_texture(palette.textures[key])}
             shape = root["shape"]
-            if len(shape) != 3 or any(s < 1 or s > 512 for s in shape):
-                raise ValueError("工程尺寸必须在 1～512 格内。")
+            if (
+                len(shape) != 3
+                or any(s < 1 or s > 2048 for s in shape)
+                or np.prod(shape) > 12_000_000
+            ):
+                raise ValueError("工程尺寸必须在 1～2048 格内，体素总量不超过 1200 万格。")
             blocks = np.frombuffer(archive.read("blocks.i32"), dtype="<i4").reshape(shape).copy()
             if blocks.min() < -1 or blocks.max() >= len(states) or not np.any(blocks >= 0):
                 raise ValueError("工程体素引用了无效的材料。")
@@ -197,7 +223,6 @@ def open_project(data: bytes) -> tuple[GeneratedStatue, Palette]:
             statue = GeneratedStatue(
                 preview, blocks, states, archive.read("skin.png"), root["match_targets"]
             )
-            rebuild(statue, palette)
             LOGGER.debug(
                 "Opened project: dimensions=%s materials=%s", shape, len(preview["materials"])
             )

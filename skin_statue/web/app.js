@@ -4,6 +4,7 @@ import { initResourcePanel, showPalette } from "/static/resources.js";
 import { createStatue, disposeStatue, createPlacementGuide, disposePlacementGuide } from "/static/statue.js";
 
 import { initEditor } from "/static/editor.js";
+import { initPoseControls } from "/static/poses.js";
 
 const $ = (selector) => document.querySelector(selector);
 const viewport = $("#viewport");
@@ -33,6 +34,9 @@ let revision = 0;
 let placementGuide = null;
 let exporting = false;
 let editor = null;
+let poseControls = null;
+let heldGroup = null;
+let renderRequest = 0;
 
 /** 导出按钮始终指向当前已显示的生成快照，参数变化不会暗中重新匹配。 */
 function updateExportButtons() {
@@ -69,7 +73,7 @@ async function exportStatue(bundle) {
 /** 生成按钮依赖有效皮肤和可用调色板。 */
 function updateGenerateButton() {
   const count = (palette?.eligible ?? 0) + ($("#statue-connected").checked ? (palette?.connected_eligible ?? 0) : 0);
-  $("#generate-statue").disabled = !skin || !count || loading || generating || editor?.busy;
+  $("#generate-statue").disabled = !skin || !count || loading || generating || editor?.busy || poseControls?.busy;
 }
 
 /** 参数改变后保留上次可看的结果，并明确提示需要重新生成。 */
@@ -83,6 +87,7 @@ function showMode(mode) {
   if (mode === "statue" && !statueMesh) return;
   previewMode = mode;
   if (player) player.visible = mode === "skin";
+  if (heldGroup) heldGroup.visible = mode === "skin";
   if (statueMesh) statueMesh.visible = mode === "statue";
   if (placementGuide) placementGuide.visible = mode === "statue" && $("#show-anchor").checked;
   editor?.setVisible(mode === "statue");
@@ -111,7 +116,7 @@ function showMode(mode) {
 
 /** 发送当前皮肤和参数，在后台生成后一次性替换雕像预览。 */
 async function generateStatue() {
-  if (!skin || !palette || generating || editor?.busy) return;
+  if (!skin || !palette || generating || editor?.busy || poseControls?.busy) return;
   generating = true;
   updateGenerateButton();
   $("#generate-statue").textContent = "正在生成…";
@@ -119,6 +124,7 @@ async function generateStatue() {
   const startRevision = revision;
   const layers = [...visibility].filter(([, enabled]) => enabled).map(([key]) => key);
   const options = {
+    ...poseControls.settings,
     palette_id: palette.id, scale: Number($("#statue-scale").value), detail: Number($("#statue-detail").value),
     hollow: $("#statue-hollow").value === "hollow", shell_thickness: Number($("#statue-thickness").value),
     overlay_offset: Number($("#statue-offset").value), alpha_threshold: Number($("#statue-alpha").value),
@@ -148,6 +154,12 @@ async function generateStatue() {
 
 /** 原子更新实际雕像网格、材料与导出快照；编辑与工程恢复复用此入口。 */
 async function displayStatue(result) {
+  if (result.ctm?.enabled !== $("#preview-connected").checked) {
+    const response = await fetch(`/api/statue/${result.statue_id}/render?connected=${$("#preview-connected").checked}`);
+    const rendering = await response.json();
+    if (!response.ok) throw new Error(rendering.detail);
+    result = { ...result, ...rendering };
+  }
   const mesh = await createStatue(result);
   if (statueMesh) { scene.remove(statueMesh); disposeStatue(statueMesh); }
   statueMesh = mesh;
@@ -162,14 +174,84 @@ async function displayStatue(result) {
   $("#show-statue").disabled = false;
   $("#statue-state").textContent = result.edits?.length ? `已编辑 ${result.edits.length} 次` : "生成完成";
   $("#statue-report").hidden = false;
-  $("#statue-statistics").textContent = `主体高度 ${result.base_height} 格；实际包围尺寸 ${result.dimensions.join(" × ")} 格\n${result.options.hollow ? "空心" : "实心"} · 方块 ${result.block_count.toLocaleString()} · 第二层 ${result.overlay_blocks.toLocaleString()}\n可见单格面 ${result.mesh.exposed_faces.toLocaleString()} → 合并矩形 ${result.mesh.quad_count.toLocaleString()}\n初次生成平均 / 最大 Lab 色差 ${result.matching.mean_color_error} / ${result.matching.max_color_error}；内部填充 ${result.matching.interior_block}`;
+  $("#statue-statistics").textContent = `站立高度基准 ${result.base_height} 格；实际包围尺寸 ${result.dimensions.join(" × ")} 格\n${result.options.hollow ? "空心" : "实心"} · 方块 ${result.block_count.toLocaleString()} · 第二层 ${result.overlay_blocks.toLocaleString()}\n可见单格面 ${result.mesh.exposed_faces.toLocaleString()} → 合并矩形 ${result.mesh.quad_count.toLocaleString()}\n初次生成平均 / 最大 Lab 色差 ${result.matching.mean_color_error} / ${result.matching.max_color_error}；内部填充 ${result.matching.interior_block}`;
   $("#statue-materials").replaceChildren(...result.materials.map((material) => {
     const row = document.createElement("div");
     row.textContent = `${material.display_name ? material.display_name + " · " : ""}${material.key} · ID ${material.numeric_id} · ${material.count.toLocaleString()} 块`;
     return row;
   }));
   showMode("statue");
+  $("#ctm-preview-status").textContent = !result.ctm?.enabled ? "连接纹理预览已关闭。" : `连接纹理：${result.ctm.connected_faces.toLocaleString()} 个暴露面。${result.ctm.unsupported_materials.length ? `${result.ctm.unsupported_materials.length} 种材料缺少支持的连接图，显示基础纹理；可从实例载入 CTM 资源。` : ""}`;
   showNotice("");
+}
+
+/** 切换仅影响当前网格的纹理，不重新匹配材料或修改体素快照。 */
+async function refreshConnectedPreview() {
+  if (!statueData || generating || editor?.busy) return;
+  const token = ++renderRequest;
+  const snapshot = statueData;
+  try {
+    const response = await fetch(`/api/statue/${snapshot.statue_id}/render?connected=${$("#preview-connected").checked}`);
+    const rendering = await response.json();
+    if (!response.ok) throw new Error(rendering.detail);
+    if (token !== renderRequest || snapshot.statue_id !== statueData?.statue_id) return;
+    await displayStatue({ ...snapshot, ...rendering });
+  } catch (error) { if (token === renderRequest) showNotice(error.message, true); }
+}
+
+/** 使用同源关节矩阵更新双层部件，手持像素用实例网格显示厚度及握持位置。 */
+function displayPose(data) {
+  const objects = new Map(data.objects.map((o) => [o.id, o]));
+  for (const mesh of player.children) {
+    mesh.matrixAutoUpdate = false;
+    mesh.matrix.fromArray(objects.get(mesh.userData.key.split(":")[0]).matrix);
+  }
+  if (heldGroup) {
+    scene.remove(heldGroup);
+    heldGroup.traverse((mesh) => { if (mesh.isMesh) {
+      mesh.geometry.dispose();
+      const materials = new Set([...([mesh.userData.standard].flat()), ...([mesh.userData.flat].flat())]);
+      const maps = new Set();
+      for (const material of materials) { if (material.map) maps.add(material.map); material.dispose(); }
+      for (const map of maps) map.dispose();
+      if (mesh.isInstancedMesh) mesh.dispose();
+    } });
+  }
+  heldGroup = new THREE.Group();
+  for (const obj of data.objects.filter((o) => o.pixels || o.cube)) {
+    if (obj.cube) {
+      const maps = ["east", "west", "up", "down", "south", "north"].map((face) => {
+        const source=obj.cube[face];
+        const pixels=new Uint8Array(source.pixels.length), stride=source.width*4;
+        for(let y=0;y<source.height;y++)pixels.set(source.pixels.slice(y*stride,(y+1)*stride),(source.height-1-y)*stride);
+        const map=new THREE.DataTexture(pixels,source.width,source.height);
+        map.colorSpace=THREE.SRGBColorSpace;map.magFilter=THREE.NearestFilter;map.minFilter=THREE.NearestFilter;map.needsUpdate=true;return map;
+      });
+      const standard=maps.map((map)=>new THREE.MeshStandardMaterial({map,roughness:1,side:THREE.DoubleSide}));
+      const flat=maps.map((map)=>new THREE.MeshBasicMaterial({map,side:THREE.DoubleSide}));
+      const mesh=new THREE.Mesh(new THREE.BoxGeometry(16,16,16),standard);
+      mesh.matrixAutoUpdate=false;mesh.matrix.fromArray(obj.matrix);mesh.userData={standard,flat};heldGroup.add(mesh);
+      continue;
+    }
+    const geometry = obj.thickness > 0 ? new THREE.BoxGeometry(16 / obj.width, 16 / obj.height, obj.thickness) : new THREE.PlaneGeometry(16 / obj.width, 16 / obj.height);
+    const standard = new THREE.MeshStandardMaterial({ roughness: 1, side: THREE.DoubleSide });
+    const flat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+    const mesh = new THREE.InstancedMesh(geometry, standard, obj.pixels.length);
+    const world = new THREE.Matrix4().fromArray(obj.matrix);
+    const translation = new THREE.Matrix4();
+    obj.pixels.forEach(([x, y, r, g, b], i) => {
+      translation.makeTranslation(16 * (1 - (x + .5) / obj.width), 16 * (1 - (y + .5) / obj.height), -obj.thickness/2);
+      mesh.setMatrixAt(i, world.clone().multiply(translation));
+      mesh.setColorAt(i, new THREE.Color().setRGB(r / 255, g / 255, b / 255, THREE.SRGBColorSpace));
+    });
+    mesh.userData = { standard, flat };
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    heldGroup.add(mesh);
+  }
+  heldGroup.visible = previewMode === "skin";
+  scene.add(heldGroup);
+  updateVisibility();
 }
 
 /** 恢复工程的模型、生成参数、调色板和图层，然后显示已编辑的体素。 */
@@ -191,9 +273,11 @@ async function restoreProject(payload) {
   excludedBlocks = settings.excluded;
   for (const key of visibility.keys()) visibility.set(key, settings.layers.includes(key));
   buildLayerControls();
+  await poseControls.restore(result.workspace || settings);
   window.dispatchEvent(new CustomEvent("project-palette-settings", { detail: settings }));
   await displayStatue(result);
   editor.reset(result);
+  if (result.workspace) $("#statue-state").textContent = "已恢复皮肤编辑设置；重新生成应用姿势与持物";
   updateGenerateButton();
 }
 
@@ -216,7 +300,7 @@ function createViewer() {
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.minDistance = 20;
-  controls.maxDistance = 160;
+  controls.maxDistance = 600;
   controls.autoRotateSpeed = 1.4;
   controls.target.set(0, 16, 0);
   setView("reset");
@@ -246,20 +330,32 @@ function createViewer() {
   });
 }
 
-/** 按角色自身左右设置视角；正面为 +Z，角色左侧为 +X。 */
+/** 按当前姿势和持物的包围盒适配固定视角；正面 +Z、角色左侧 +X。 */
 function setView(view) {
   const offsets = {
     front: [0, 0, 65], back: [0, 0, -65],
     left: [65, 0, 0], right: [-65, 0, 0],
     top: [0, 65, 0.01], reset: [39, 15, 65],
   };
-  controls.target.set(0, 16, 0);
-  camera.position.copy(controls.target).add(new THREE.Vector3(...offsets[view]));
+  const bounds=new THREE.Box3();
+  scene.updateMatrixWorld(true);
+  if(previewMode==="statue" && statueMesh) bounds.setFromObject(statueMesh);
+  else if(player) {bounds.setFromObject(player);if(heldGroup)bounds.union(new THREE.Box3().setFromObject(heldGroup));}
+  let distance=65;
+  if(bounds.isEmpty())controls.target.set(0,16,0);
+  else {
+    controls.target.copy(bounds.getCenter(new THREE.Vector3()));
+    const size=bounds.getSize(new THREE.Vector3());
+    const extent=Math.max(size.x,size.y,size.z)/Math.min(1,camera.aspect);
+    distance=Math.max(65,extent/(2*Math.tan(THREE.MathUtils.degToRad(camera.fov/2)))*1.15);
+  }
+  const offset=new THREE.Vector3(...offsets[view]).normalize().multiplyScalar(distance);
+  camera.position.copy(controls.target).add(offset);
   // 清除阻尼中残留的旋转，确保固定视角可以精确到位。
   const damping = controls.enableDamping;
   controls.enableDamping = false;
   controls.update();
-  camera.position.copy(controls.target).add(new THREE.Vector3(...offsets[view]));
+  camera.position.copy(controls.target).add(offset);
   controls.update();
   controls.enableDamping = damping;
 }
@@ -361,6 +457,7 @@ async function importSkin(file, preserveLayers = false) {
     $("#file-info").textContent = `${file.name} · ${parsed.source_size.join(" × ")}`;
     $("#format-badge").textContent = `${parsed.legacy ? "LEGACY → 64×64" : "64×64 RGBA"} / ${parsed.model === "steve" ? "STEVE" : "ALEX"}`;
     buildLayerControls();
+    await poseControls.apply();
     updateVisibility();
     updateAtlas();
     showMode("skin");
@@ -435,6 +532,7 @@ function updateVisibility() {
     mesh.visible = visibility.get(mesh.userData.key) && mesh.userData.pixels > 0;
     mesh.material = $("#flat-color").checked ? mesh.userData.flat : mesh.userData.standard;
   }
+  if (heldGroup) heldGroup.children.forEach((mesh) => { mesh.material = $("#flat-color").checked ? mesh.userData.flat : mesh.userData.standard; });
   for (const layer of ["base", "overlay"]) {
     const inputs = [...document.querySelectorAll(`[data-layer="${layer}"]:not(:disabled)`)];
     const checked = inputs.filter((input) => input.checked).length;
@@ -502,6 +600,20 @@ async function loadDemo() {
 
 /** 绑定文件导入、视角、图层和导出等界面交互。 */
 function bindUI() {
+  $("#stop-server").addEventListener("click",async()=>{
+    const button=$("#stop-server");button.disabled=true;button.textContent="正在停止…";
+    try {
+      const response=await fetch("/api/shutdown",{method:"POST"});
+      const result=await response.json();
+      if(!response.ok)throw new Error(result.detail);
+      renderer.setAnimationLoop(null);
+      document.querySelector(".workspace").inert=true;
+      button.textContent="服务退出中";
+      status.textContent="正在退出 Python 服务。";
+      document.querySelector(".local-badge").textContent="已请求退出本地服务";
+      showNotice("已请求退出。当前任务结束后 Python 进程会关闭；再次运行 start.bat 或 python run.py 后刷新页面即可继续。");
+    } catch(error) {button.disabled=false;button.textContent="停止服务";showNotice(error.message,true);}
+  });
   $("#username-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = $("#import-username");
@@ -563,6 +675,8 @@ function bindUI() {
   $("#auto-rotate").addEventListener("change", (event) => { controls.autoRotate = event.target.checked; });
   $("#flat-color").addEventListener("change", updateVisibility);
   $("#statue-plain").addEventListener("change", updateVisibility);
+  $("#preview-connected").addEventListener("change", () => void refreshConnectedPreview());
+  $("#statue-alpha").addEventListener("change", () => void poseControls.apply());
   $("#show-anchor").addEventListener("change", () => { if (placementGuide) placementGuide.visible = previewMode === "statue" && $("#show-anchor").checked; });
   $("#export-statue").addEventListener("click", () => void exportStatue(false));
   $("#export-statue-bundle").addEventListener("click", () => void exportStatue(true));
@@ -593,8 +707,14 @@ try {
   bindUI();
   editor = initEditor({
     canvas: renderer.domElement, camera, scene,
-    state: () => ({ mesh: statueMesh, data: statueData, mode: previewMode, busy: generating || loading }),
+    state: () => ({ mesh: statueMesh, data: statueData, mode: previewMode, busy: generating || loading || poseControls?.busy }),
     display: displayStatue, restore: restoreProject, download, notify: showNotice, sync: updateGenerateButton,
+    workspace: () => poseControls.settings,
+  });
+  poseControls = initPoseControls({
+    model: () => skin?.model, display: displayPose, changed: markStatueChanged,
+    palette: () => palette,
+    sync: updateGenerateButton, resourcesChanged: refreshConnectedPreview,
   });
   void loadDemo();
 } catch (error) {

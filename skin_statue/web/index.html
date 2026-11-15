@@ -15,6 +15,7 @@
     <div class="brand"><span class="brand-mark">◇</span><div>SKIN STATUE<span class="brand-sub">Minecraft 皮肤工作台</span></div></div>
     <span class="workspace-tag">01 / 皮肤预览</span>
     <div class="local-badge"><span></span> 本地运行 · 离线可用</div>
+    <button id="stop-server" title="停止当前本地 Python 服务进程">停止服务</button>
   </header>
   <main class="workspace">
     <aside class="sidebar">
@@ -46,6 +47,23 @@
         <p class="hint" id="model-hint">请选择与皮肤匹配的手臂模型。</p>
       </section>
       <section class="layer-section">
+        <div class="section-heading"><h2>姿势</h2></div>
+        <select id="pose-preset" aria-label="盔甲架姿势"><option value="standing">标准站立</option><option value="custom">自定义角度</option></select>
+        <details><summary>调整各部位角度</summary><div id="pose-angles"></div></details>
+        <p class="hint">X / Y / Z 为关节旋转角度。调整立即作用于皮肤；生成雕像时使用当前姿势。</p>
+      </section>
+      <section class="held-settings">
+        <div class="section-heading"><h2>左右手持物</h2></div>
+        <input id="scene-instance" placeholder="实例 .minecraft 路径" aria-label="持物与 CTM 资源实例路径">
+        <button id="load-scene-resources" class="bundle-button">只读载入物品与连接纹理</button>
+        <p id="scene-resource-status" class="hint" role="status">从实例加载实际资源包纹理，也可直接导入手持 PNG。</p>
+        <form id="item-search-form"><input id="item-search" placeholder="搜索物品名字、注册名或 ID" aria-label="查找运行时物品"><button>查找物品</button></form>
+        <div class="candidate-navigation"><button id="items-prev" disabled>上一页物品</button><button id="items-next" disabled>下一页物品</button></div>
+        <div id="held-controls"></div>
+        <p class="hint">位移单位为皮肤像素，旋转单位为度；0 厚度显示薄片，生成至少一格。操作只更新皮肤预览，重新生成后才应用到雕像。</p>
+        <p id="pose-status" class="hint" role="status"></p>
+      </section>
+      <section class="layer-section">
         <div class="section-heading"><span class="step">03</span><h2>皮肤图层</h2></div>
         <div class="layer-masters">
           <label><input type="checkbox" id="base-visible" checked> 基础层</label>
@@ -58,7 +76,7 @@
       <section class="statue-settings">
         <div class="section-heading"><span class="step">04</span><h2>生成方块雕像</h2></div>
         <div id="statue-palette" class="hint">请先在下方载入方块索引或扫描实例。</div>
-        <label class="setting-row">主体高度<select id="statue-scale"><option value="1">32 格 · 1 倍</option><option value="2">64 格 · 2 倍</option><option value="3" selected>96 格 · 3 倍</option><option value="4">128 格 · 4 倍</option><option value="5">160 格 · 5 倍</option><option value="6">192 格 · 6 倍</option></select></label>
+        <label class="setting-row">站立高度基准<select id="statue-scale"><option value="1">32 格 · 1 倍</option><option value="2">64 格 · 2 倍</option><option value="3" selected>96 格 · 3 倍</option><option value="4">128 格 · 4 倍</option><option value="5">160 格 · 5 倍</option><option value="6">192 格 · 6 倍</option></select></label>
         <label class="setting-row">颜色细节<select id="statue-detail"><option value="1">逐像素 · 完整细节</option><option value="2">2 × 2 像素平均</option><option value="4">4 × 4 像素平均</option></select></label>
         <label class="setting-row">内部结构<select id="statue-hollow"><option value="hollow">空心</option><option value="solid">实心</option></select></label>
         <label class="setting-row">壳厚（格）<input id="statue-thickness" type="number" min="1" max="4" value="1"></label>
@@ -66,7 +84,7 @@
         <label class="setting-row">外层 Alpha 阈值<input id="statue-alpha" type="number" min="1" max="255" value="128"></label>
         <label class="setting-row">匹配策略<select id="statue-smoothness"><option value="0">颜色优先</option><option value="0.2" selected>平衡</option><option value="0.7">平滑优先</option></select></label>
         <label class="setting-row"><span>优先连接纹理</span><input id="statue-connected" type="checkbox"></label>
-        <p class="hint">启用后在相近色差内优先 CTM 候选，游戏端按邻接连接；预览显示基础贴图。重力方块始终排除。</p>
+        <p class="hint">启用后在相近色差内优先 CTM 候选，游戏端按邻接连接；预览可按已载入的连接图显示邻接效果。重力方块始终排除。</p>
         <button id="generate-statue" class="primary-button" disabled>生成雕像预览</button>
         <p class="hint">按上方勾选的身体部位和图层生成。修改后点击重新生成。主体高度不含外凸第二层。</p>
       </section>
@@ -102,7 +120,7 @@
         <div class="view-toolbar" aria-label="固定视角">
           <button data-view="front">正面</button><button data-view="back">背面</button><button data-view="left">左侧</button><button data-view="right">右侧</button><button data-view="top">顶部</button><span></span><button data-view="reset" title="重置相机和旋转">↺ 重置</button>
         </div>
-        <div class="scene-label"><span class="scene-dot"></span> 标准站姿 <span class="axis-label">Y ↑</span></div>
+        <div class="scene-label"><span class="scene-dot"></span> 静态姿势 <span class="axis-label">Y ↑</span></div>
         <div class="atlas-card"><div><strong>纹理图集</strong><select id="atlas-kind" aria-label="纹理图集图层"><option value="normalized">完整</option><option value="base">基础</option><option value="overlay">外层</option></select></div><div class="checker"><img id="atlas" alt="64×64 皮肤纹理图集" hidden></div><span>最近邻采样 · 保留像素边界</span></div>
         <div id="loading" class="loading" hidden>正在解析皮肤…</div>
       </div>
@@ -126,14 +144,16 @@
         <label><input type="checkbox" id="auto-rotate"> 自动旋转</label>
         <label><input type="checkbox" id="flat-color"> 原始颜色</label>
         <label><input type="checkbox" id="show-anchor" checked> I 点与包围盒</label>
+        <label><input type="checkbox" id="preview-connected" checked> 连接纹理预览</label>
         <div class="background-options" aria-label="预览背景"><button data-bg="dark" class="swatch dark active" aria-label="深色背景"></button><button data-bg="light" class="swatch light" aria-label="浅色背景"></button><button data-bg="checker" class="swatch checker" aria-label="棋盘背景"></button></div>
       </div>
       <footer class="statusbar"><span id="status" role="status" aria-live="polite">正在准备预览…</span><span class="mouse-help">左键旋转 · 滚轮缩放 · 右键平移</span></footer>
       <div id="notice" class="notice" role="alert" hidden></div>
+      <p id="ctm-preview-status" class="hint" role="status"></p>
 
       <details id="statue-report" class="statue-report" hidden><summary>雕像材料与匹配统计</summary><div id="statue-statistics"></div><div id="statue-materials"></div></details>
       <section class="resources-panel" aria-label="实例方块与调色板">
-        <div class="resources-heading"><div><span class="eyebrow">BLOCK RESOURCES</span><h2>实例方块与调色板</h2></div><a id="palette-export" class="download-link" hidden>↓ 导出调色板 JSON</a></div>
+        <div class="resources-heading"><div><span class="eyebrow">BLOCK RESOURCES</span><h2>实例方块与调色板</h2></div><a id="item-map-export" class="download-link" hidden>↓ 物品名称映射</a><a id="palette-export" class="download-link" hidden>↓ 导出调色板 JSON</a></div>
         <p class="hint">扫描实例可读取原版候选及启用的资源包覆盖。导入辅助模组 ZIP 可读取完整运行时注册表。</p>
         <form id="scan-form" class="scan-form"><label class="sr-only" for="instance-path">实例 .minecraft 路径</label><input id="instance-path" type="text" placeholder="GTNH 实例的 .minecraft 路径" required><button id="scan-instance" type="submit">只读扫描实例</button></form>
         <details class="resource-advanced"><summary>原版 JAR 路径（未自动找到时填写）</summary><input id="vanilla-jar" type="text" placeholder="1.7.10 客户端 JAR，可选" aria-label="原版客户端 JAR 路径"></details>

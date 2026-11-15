@@ -64,6 +64,8 @@ export async function showPalette(payload) {
   const link = $("#palette-export");
   link.href = `/api/palettes/${palette.id}/export`;
   link.hidden = false;
+  $("#item-map-export").href=`/api/palettes/${palette.id}/items/export`;
+  $("#item-map-export").hidden=false;
   $("#match-result").textContent = "";
   report(palette.source === "runtime_index" ? "运行时注册表与纹理已导入。" : "实例扫描完成，原版起步调色板已建立。模组注册表请导入游戏索引 ZIP。");
   window.dispatchEvent(new CustomEvent("palette-loaded", { detail: palette }));

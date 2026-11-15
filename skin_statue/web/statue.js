@@ -40,7 +40,8 @@ export async function createStatue(data) {
       tile[q * 4 + v] = texture;
       tileColors[texture].toArray(colors, q * 12 + v * 3);
     }
-    uv.set([0, h, w, h, 0, 0, w, 0], q * 8);
+    // Minecraft 方块底面的 PNG 顶行对应 -Z，与几何顶点的排列相反。
+    uv.set(face === 3 ? [0, 0, w, 0, 0, h, w, h] : [0, h, w, h, 0, 0, w, 0], q * 8);
     indices.set([0, 2, 1, 2, 3, 1].map((v) => q * 4 + v), q * 6);
   }
   const source = await new THREE.ImageLoader().loadAsync(data.atlas.image);
