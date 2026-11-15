@@ -2,6 +2,7 @@
 
 import base64
 import logging
+from dataclasses import dataclass
 from io import BytesIO
 from math import ceil, sqrt
 
@@ -14,6 +15,16 @@ from skin_statue.core.skin import png_url
 LOGGER = logging.getLogger(__name__)
 # 数组按 X/Y/Z 排列；顺序与六面调色板及前端顶点生成一致。
 DIRECTIONS = ((0, 1), (0, -1), (1, 1), (1, -1), (2, 1), (2, -1))
+
+
+@dataclass
+class GeneratedStatue:
+    """同一次生成的预览、实际状态数组和来源，供导出复用而不重新匹配。"""
+
+    preview: dict
+    state_indices: np.ndarray
+    states: list[dict]
+    normalized_skin: bytes
 
 
 def exposure(occupied: np.ndarray, axis: int, sign: int) -> np.ndarray:
@@ -228,7 +239,7 @@ def greedy_mesh(blocks, lookup, origin):
     }
 
 
-def generate_statue(parsed: dict, palette: Palette, options: dict) -> dict:
+def generate_statue(parsed: dict, palette: Palette, options: dict) -> GeneratedStatue:
     """生成实际方块体素并返回批处理预览网格、材料统计与生成参数。"""
     scale = options["scale"]
     offset = options["overlay_offset"]
@@ -322,4 +333,12 @@ def generate_statue(parsed: dict, palette: Palette, options: dict) -> dict:
         mesh["quad_count"],
         report,
     )
-    return result
+    minimum = positions.min(axis=0)
+    maximum = positions.max(axis=0) + 1
+    cropped = blocks[tuple(slice(minimum[i], maximum[i]) for i in range(3))].copy()
+    return GeneratedStatue(
+        result,
+        cropped,
+        candidates,
+        base64.b64decode(parsed["images"]["normalized"].split(",", 1)[1]),
+    )

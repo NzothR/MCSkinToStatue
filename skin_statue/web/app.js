@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "/static/vendor/OrbitControls.js";
 import { initResourcePanel } from "/static/resources.js";
-import { createStatue, disposeStatue } from "/static/statue.js";
+import { createStatue, disposeStatue, createPlacementGuide, disposePlacementGuide } from "/static/statue.js";
 
 const $ = (selector) => document.querySelector(selector);
 const viewport = $("#viewport");
@@ -28,6 +28,40 @@ let excludedBlocks = [];
 let previewMode = "skin";
 let generating = false;
 let revision = 0;
+let placementGuide = null;
+let exporting = false;
+
+/** 导出按钮始终指向当前已显示的生成快照，参数变化不会暗中重新匹配。 */
+function updateExportButtons() {
+  $("#export-statue").disabled = !statueData || exporting;
+  $("#export-statue-bundle").disabled = !statueData || exporting;
+}
+
+/** 下载同源结构，或附带材质、ID、生成参数和规范化皮肤的对照包。 */
+async function exportStatue(bundle) {
+  if (!statueData || exporting) return;
+  const snapshot = statueData;
+  const profile = $("#statue-export-profile").value;
+  const filename = `statue-${snapshot.statue_id.slice(0, 8)}-${profile}.${bundle ? "zip" : "schematic"}`;
+  exporting = true;
+  updateExportButtons();
+  $("#statue-export-hint").textContent = "正在编码结构并读回校验 ID、Metadata 和 I 点原点…";
+  try {
+    const response = await fetch(`/api/statue/${snapshot.statue_id}/export?profile=${profile}&bundle=${bundle}`);
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail);
+    }
+    download(URL.createObjectURL(await response.blob()), filename, true);
+    $("#statue-export-hint").textContent = profile === "schematica_gtnh" ? `已导出 ${filename}。在 Schematica 中启用 SchematicPlus，并用其 GUI 定位。` : `已导出 ${filename}。站在 I 点：//schem load mcedit statue-${snapshot.statue_id.slice(0, 8)}-${profile}，然后 //paste -a。正面朝南。`;
+  } catch (error) {
+    $("#statue-export-hint").textContent = error.message;
+    showNotice(error.message, true);
+  } finally {
+    exporting = false;
+    updateExportButtons();
+  }
+}
 
 /** 生成按钮依赖有效皮肤和可用调色板。 */
 function updateGenerateButton() {
@@ -46,6 +80,7 @@ function showMode(mode) {
   previewMode = mode;
   if (player) player.visible = mode === "skin";
   if (statueMesh) statueMesh.visible = mode === "statue";
+  if (placementGuide) placementGuide.visible = mode === "statue" && $("#show-anchor").checked;
   $("#show-skin").classList.toggle("active", mode === "skin");
   $("#show-statue").classList.toggle("active", mode === "statue");
   if (mode === "statue") {
@@ -97,6 +132,11 @@ async function generateStatue() {
     statueMesh = mesh;
     statueData = result;
     scene.add(mesh);
+    if (placementGuide) { scene.remove(placementGuide); disposePlacementGuide(placementGuide); }
+    placementGuide = createPlacementGuide(result);
+    scene.add(placementGuide);
+    updateExportButtons();
+    $("#statue-export-hint").textContent = `I 点：局部坐标 ${result.placement.anchor_local.join(", ")}。正面朝南（+Z），I 在东南角。`;
     updateVisibility();
     $("#show-statue").disabled = false;
     $("#statue-state").textContent = revision === startRevision ? "生成完成" : "已显示本次结果；参数已改，请重新生成";
@@ -464,6 +504,9 @@ function bindUI() {
   $("#auto-rotate").addEventListener("change", (event) => { controls.autoRotate = event.target.checked; });
   $("#flat-color").addEventListener("change", updateVisibility);
   $("#statue-plain").addEventListener("change", updateVisibility);
+  $("#show-anchor").addEventListener("change", () => { if (placementGuide) placementGuide.visible = previewMode === "statue" && $("#show-anchor").checked; });
+  $("#export-statue").addEventListener("click", () => void exportStatue(false));
+  $("#export-statue-bundle").addEventListener("click", () => void exportStatue(true));
   $("#generate-statue").addEventListener("click", () => void generateStatue());
   $("#show-skin").addEventListener("click", () => showMode("skin"));
   $("#show-statue").addEventListener("click", () => showMode("statue"));

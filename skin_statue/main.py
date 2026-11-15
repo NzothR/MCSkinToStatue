@@ -3,8 +3,10 @@
 import hashlib
 import json
 import logging
+from collections import OrderedDict
 from pathlib import Path
 from typing import Annotated, Literal
+from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
@@ -13,14 +15,16 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from skin_statue.core.palette import Palette
+from skin_statue.core.schematic import PROFILES, export_bundle, placement, schematic_bytes
 from skin_statue.core.skin import parse_skin
-from skin_statue.core.statue import generate_statue
+from skin_statue.core.statue import GeneratedStatue, generate_statue
 from skin_statue.resources.instance import InstanceResources
 from skin_statue.resources.registry import import_runtime_index, vanilla_palette
 
 WEB = Path(__file__).parent / "web"
 app = FastAPI(title="Skin Statue · 皮肤预览", docs_url=None, redoc_url=None)
 PALETTES: dict[str, Palette] = {}
+STATUES: OrderedDict[str, GeneratedStatue] = OrderedDict()
 PROJECT = WEB.parents[1]
 
 
@@ -163,7 +167,7 @@ async def build_statue(
     options: Annotated[str, Form()],
     model: Annotated[Literal["steve", "alex"], Form()] = "steve",
 ) -> dict:
-    """离线生成方块体素与纹理批处理网格，不写入或导出结构文件。"""
+    """生成并保留同源预览与体素快照，供用户导出当前已查看的结果。"""
     try:
         settings = StatueOptions.model_validate_json(options)
         palette = get_palette(settings.palette_id)
@@ -173,13 +177,57 @@ async def build_statue(
 
         def build() -> dict:
             parsed = parse_skin(data, model)
-            return generate_statue(parsed, palette, settings.model_dump(exclude={"palette_id"}))
+            statue = generate_statue(parsed, palette, settings.model_dump(exclude={"palette_id"}))
+            identity = uuid4().hex
+            statue.preview.update(
+                {
+                    "statue_id": identity,
+                    "source": {
+                        "filename": file.filename,
+                        "sha256": hashlib.sha256(data).hexdigest(),
+                        "model": parsed["model"],
+                    },
+                    "palette_source": palette.source,
+                    "resource_packs": palette.resource_packs,
+                    "placement": placement(statue.state_indices.shape),
+                }
+            )
+            STATUES[identity] = statue
+            # 最多保留四份完整快照，避免连续调节时累积体素和图集内存。
+            while len(STATUES) > 4:
+                STATUES.popitem(last=False)
+            return statue.preview
 
         return await run_in_threadpool(build)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     finally:
         await file.close()
+
+
+@app.get("/api/statue/{identity}/export")
+async def export_statue(
+    identity: str,
+    profile: Literal["worldedit_gtnh", "mcedit", "schematica_gtnh"] = "worldedit_gtnh",
+    bundle: bool = False,
+) -> Response:
+    """下载指定预览快照的 Schematic 或结构／材料诊断 ZIP。"""
+    if identity not in STATUES:
+        raise HTTPException(410, "这份雕像快照已过期或服务已重启，请重新生成后导出。")
+    statue = STATUES[identity]
+    try:
+        payload = await run_in_threadpool(
+            export_bundle if bundle else schematic_bytes, statue, profile
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    extension = "zip" if bundle else "schematic"
+    filename = f"statue-{identity[:8]}-{profile}.{extension}"
+    return Response(
+        payload,
+        media_type="application/zip" if bundle else "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/palettes/{identity}/entries")
@@ -246,7 +294,8 @@ def statue_capabilities() -> dict:
     return {
         "generation_available": True,
         "status": "preview_available",
-        "structure_export_available": False,
+        "structure_export_available": True,
+        "export_profiles": PROFILES,
         "scales": [1, 2, 3, 4, 5, 6],
         "base_heights": [32, 64, 96, 128, 160, 192],
         "palette_match_available": True,

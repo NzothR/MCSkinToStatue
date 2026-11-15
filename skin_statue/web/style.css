@@ -138,6 +138,7 @@ h1 { font-size: 22px; font-weight: 450; letter-spacing: 2px; margin: 8px 0 0; }
 #statue-materials { max-height: 250px; overflow-y: auto; line-height: 1.9; font-family: Consolas, monospace; font-size: 11px; }
 .resource-actions select { max-width: 370px; }
 .block-enabled { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 10px; color: var(--accent); }
+.bundle-button { width: 100%; margin-top: 8px; font-size: 11px; padding: 10px; }
 .palette-match { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 16px 0; font-size: 11px; }
 .palette-match label { display: flex; align-items: center; gap: 8px; }
 .palette-match select { width: 110px; padding: 7px; }

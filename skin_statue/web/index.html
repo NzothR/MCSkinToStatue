@@ -58,7 +58,16 @@
         <p class="hint">按上方勾选的身体部位和图层生成。修改后点击重新生成。主体高度不含外凸第二层。</p>
       </section>
       <section class="export-section">
-        <div class="section-heading"><span class="step">05</span><h2>皮肤 PNG</h2></div>
+        <div class="section-heading"><span class="step">05</span><h2>导出雕像结构</h2></div>
+        <label class="sr-only" for="statue-export-profile">结构格式</label>
+        <select id="statue-export-profile"><option value="worldedit_gtnh">GTNH WorldEdit · 扩展 ID</option><option value="mcedit">传统 MCEdit / WorldEdit · ID≤4095</option><option value="schematica_gtnh">GTNH Schematica · SchematicPlus</option></select>
+        <button id="export-statue" class="primary-button" disabled>↓ 导出 .schematic</button>
+        <button id="export-statue-bundle" class="bundle-button" disabled>↓ 结构与材料对照包 ZIP</button>
+        <p class="hint" id="statue-export-hint">先生成雕像。默认 I 点为正面右下角，正面朝南（+Z）。</p>
+        <p class="hint">导出当前已生成的结果；修改参数后需重新生成。Schematica 扩展文件需要开启 useSchematicplusFormat。</p>
+      </section>
+      <section class="export-section">
+        <div class="section-heading"><span class="step">06</span><h2>皮肤 PNG</h2></div>
         <label class="sr-only" for="export-kind">导出内容</label>
         <select id="export-kind">
           <option value="normalized">完整皮肤 · 64 × 64 PNG</option>
@@ -87,6 +96,7 @@
         <label><input type="checkbox" id="grid-visible" checked> 地面网格</label>
         <label><input type="checkbox" id="auto-rotate"> 自动旋转</label>
         <label><input type="checkbox" id="flat-color"> 原始颜色</label>
+        <label><input type="checkbox" id="show-anchor" checked> I 点与包围盒</label>
         <div class="background-options" aria-label="预览背景"><button data-bg="dark" class="swatch dark active" aria-label="深色背景"></button><button data-bg="light" class="swatch light" aria-label="浅色背景"></button><button data-bg="checker" class="swatch checker" aria-label="棋盘背景"></button></div>
       </div>
       <footer class="statusbar"><span id="status" role="status" aria-live="polite">正在准备预览…</span><span class="mouse-help">左键旋转 · 滚轮缩放 · 右键平移</span></footer>

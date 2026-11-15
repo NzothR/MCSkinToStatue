@@ -2,7 +2,7 @@
 
 本地运行的 Minecraft Java 版皮肤 3D 预览工具。Python 解析皮肤，Three.js 渲染标准站姿，皮肤数据与预览资源均保留在本机。
 
-当前提供皮肤解析、实例资源扫描、运行时方块索引导入、逐面调色板、可调尺寸的方块雕像生成和双模式 3D 预览。辅助模组从 GTNH 客户端导出真实注册信息与已加载纹理。当前没有结构文件导出功能。
+当前提供皮肤解析、实例资源扫描、运行时方块索引导入、逐面调色板、可调尺寸的方块雕像生成、双模式 3D 预览和 `.schematic` 结构导出。辅助模组从 GTNH 客户端导出真实注册信息与已加载纹理。
 
 ## 启动
 
@@ -121,7 +121,55 @@ Modernity 等包的 CTM 规则会保留并按 `matchBlocks`、`matchTiles`、数
 
 预览从实际匹配后的方块数组提取可见面，剔除相邻不透明体素内面，再贪心合并同方向同纹理矩形。前端使用纹理图集与单个网格批处理，合并后的矩形仍每格重复方块纹理。图集中的每张预览纹理最高使用 64×64 像素，纹理较多时降低采样尺寸以保持图集不超过 4096；原始索引纹理不被修改。“方块代表色”可查看纯色效果，“原始颜色”可关闭预览方向明暗。
 
-不同高度以相同屏幕玩家比例显示，实际尺寸、体素数、第二层方块数、材料数量和色差显示在“雕像材料与匹配统计”中；雕像模式地面网格间距对应一格。现有 PNG 功能继续用于皮肤和视角截图，本轮不提供雕像结构导出。
+不同高度以相同屏幕玩家比例显示，实际尺寸、体素数、第二层方块数、材料数量和色差显示在“雕像材料与匹配统计”中；雕像模式地面网格间距对应一格。现有 PNG 功能继续用于皮肤和视角截图。
+
+## 导出结构并在游戏中查看
+
+生成后，左侧“导出雕像结构”提供 `.schematic` 和“结构与材料对照包 ZIP”。导出严格使用当前已生成预览的体素快照，保留所有内外方块、空气和 Metadata，不重新选择材料。调整参数后可以导出上次已生成结果，也可以重新生成后再导出新结果。
+
+| 导出模式 | 编码与适用范围 |
+|---|---|
+| GTNH WorldEdit · 扩展 ID（默认） | `Blocks` 低 8 位、`AddBlocks` 中间 4 位、`AddBlocks2` 高 4 位，支持 0～65535；针对实例中的 `worldedit-v0.0.10` 读取器核对 |
+| 传统 MCEdit / WorldEdit | `Blocks` 与 `AddBlocks`，支持 0～4095；当前雕像使用超限 ID 时明确拒绝导出，不截断或替换方块 |
+| GTNH Schematica · SchematicPlus | `Blocks` 低 8 位与每格一个字节的 `AddBlocks`；实例中的 `Schematica-1.12.6-GTNH` 需开启 `useSchematicplusFormat=true`；按该读取器有符号 Short 映射行为限定 ID≤32767 |
+
+三种模式均是 GZip 压缩的 NBT Alpha Schematic，扩展名为 `.schematic`。GTNH WorldEdit 与 SchematicPlus 的高位编码不同，按目标加载器选择模式。现代 Sponge `.schem` 不用于本项目的 MC 1.7.10 客户端。
+
+文件同时包含 `BlockMapping` 和 `SchematicaMapping` 注册名映射，供支持它们的读取器转换目标环境的数字 ID。生成报告保留来源索引和资源包顺序。模型仅使用静态完整方块候选，`Entities` 和 `TileEntities` 均为空。
+
+每次导出都将 NBT 实际读回，比较尺寸、数组长度、全部 ID／Metadata、注册名映射和粘贴偏移。数组采用 `index = x + (y * Length + z) * Width`，每层 X 最快、其次 Z、最后 Y。校验失败时不返回文件。这里是导出功能自身的数据校验，游戏加载效果由用户验收。
+
+### I 点与粘贴方位
+
+从正面看，I 是整个雕像实际包围盒的右下角方块坐标。顶面为 ABCD，正面为 CDGI，背面为 ABEF，八点对应如下：
+
+```text
+       B--------A
+      /|       /|
+     C--------D |
+     | F------|-E
+     |/       |/
+     G--------I  ← 玩家粘贴参考点
+```
+
+坐标约定为 +X 东、+Y 上、+Z 南。导出的正面固定朝南（+Z），I 位于包围盒东南侧底部。局部尺寸 `(W,H,L)` 下，I 为 `(W-1,0,L-1)`，WorldEdit 偏移写为 `(1-W,0,1-L)`；`WEOriginX/Y/Z` 均为 0。使用普通粘贴时，玩家所在方块坐标就是 I，结构从此向西、向北、向上展开，底部与玩家脚部同一层。面朝西北可从 I 看向雕像正面。
+
+WorldEdit 的普通 `//paste` 不随玩家视线自动旋转，预览相机也不会改变导出朝向。界面的“I 点与包围盒”仅辅助显示，不会添加到结构中。Schematica GUI 使用自身定位方式，不应用 WorldEdit 的 I 点粘贴偏移。
+
+把默认模式下载的文件放入 WorldEdit 的结构目录。已核对当前实例配置，实际位置为 `.minecraft/config/worldedit/schematics/`；多人游戏则使用服务器的对应目录。以 `statue.schematic` 为例，站在预定 I 点执行：
+
+```text
+//schem load mcedit statue
+//paste -a
+```
+
+直接下载的文件名会包含生成快照短 ID 与模式名，加载时使用实际文件名；ZIP 内固定为 `statue.schematic`。`//paste -a` 只放非空气块，适合先观察生成的雕像；需要按完整包围盒替换空气时使用 `//paste`，空心内部和透明外层留下的空气也会参与粘贴。
+
+### 对照包与快照
+
+ZIP 包含 `statue.schematic`、`report.json`、`materials.csv`、`skin-normalized.png` 和使用说明。报告包含源皮肤文件名／哈希、模型、参数、资源包、材料注册名、数字 ID、Metadata、数量、六面图标名、代表颜色及纹理像素来源。颜色与预览有差异时，可据此在游戏中核对具体方块。
+
+服务内存保留最近四次完整生成快照，重启后清空。当前页面使用的快照过期时，下载会提示重新生成，不会静默生成另一个结果。导出文件由浏览器下载，不自动写入游戏实例、服务器或存档。更新 Python 代码或依赖后重启本地服务；界面刷新后重新生成一次，即可使用带导出数据的快照。
 
 ## 开发
 
@@ -130,6 +178,7 @@ run.py                     启动入口
 skin_statue/core/skin.py    UV、旧皮肤转换、图层解析、PNG 编码
 skin_statue/core/palette.py 逐面颜色、候选筛选和单色匹配
 skin_statue/core/statue.py  整数体素、多面匹配、空心处理、贪心网格和图集
+skin_statue/core/schematic.py Alpha Schematic、扩展 ID、I 点偏移、读回校验和诊断 ZIP
 skin_statue/resources/      实例扫描、CTM 规则、运行时注册表导入
 skin_statue/main.py         FastAPI 解析接口和静态资源服务
 skin_statue/web/            本地界面、Three.js、原创示例
@@ -152,7 +201,7 @@ node --check skin_statue/web/resources.js
 node --check skin_statue/web/statue.js
 ```
 
-按项目 skill，当前开发执行构建和静态检查，不运行自动化或冒烟测试。皮肤双层预览与辅助模组导出已由用户确认可用。当前人工验收请对照不对称皮肤查看雕像正背面、左右肢体、头顶与脚底，切换 32／96／192 格和实心／空心，检查第二层透明区域、实际尺寸与材料数量；在调色板禁用一个已使用状态后重新生成，确认材料报告不再包含该状态。
+按项目 skill，当前开发执行构建和静态检查，不运行自动化或冒烟测试。皮肤双层预览、辅助模组导出和雕像预览已由用户实际使用。当前人工验收请在 GTNH 中加载默认扩展格式，站在预定 I 点粘贴，对照正背面、左右肢体、头顶脚底、空心与第二层，并核对报告中的高 ID 材料是否是游戏中实际放置的方块。
 
 资源接口：
 
@@ -168,14 +217,19 @@ node --check skin_statue/web/statue.js
 | `POST /api/resources/local/{filename}` | 直接载入项目索引 |
 | `GET /api/resources/loaded` | 返回当前已载入调色板的概要 |
 | `POST /api/statue/generate` | multipart `file`、`model`、JSON 字符串 `options`；返回图集、材料统计及批处理网格 |
-| `GET /api/statue/capabilities` | 返回生成与预览可用、结构导出不可用，以及支持的高度 |
+| `GET /api/statue/{id}/export` | `profile=worldedit_gtnh/mcedit/schematica_gtnh`，`bundle=true` 时返回结构及诊断 ZIP |
+| `GET /api/statue/capabilities` | 返回生成、预览、导出模式及支持的高度 |
 
 每张不同纹理只分析一次，时间与纹理像素总量线性相关。索引状态建立与状态／表面数量线性相关；单色匹配遍历可用候选，时间 O(P)。索引 ZIP 上限 128 MB，总展开大小上限 512 MB，直接读取且不解压到游戏目录。
 
 雕像体素与目标色缓冲区空间 O(V)；唯一颜色／可见面组合数为 U、可用候选数为 P 时，匹配计算 O(U×P)。隐藏面剔除和空心腐蚀线性遍历体素，网格合并按二维切片连续矩形处理。返回网格以 little-endian Int32 的 Base64 表示，每条记录为 `[x,y,z,face,width,height,tile]`；面顺序为 east／west／up／down／south／north。
+
+导出在同一份裁剪后的状态数组上进行，序列化和读回校验时间与体素数线性相关，额外空间 O(V)。完整体素快照仅保留在服务端，浏览器通过 `statue_id` 下载对应结果。
 
 ## 参考与第三方资源
 
 皮肤六面展开和旧版镜像方向参考 [skinview3d 模型源码](https://github.com/bs-community/skinview3d/blob/master/src/model.ts) 与 [skinview-utils 旧皮肤转换源码](https://github.com/bs-community/skinview-utils/blob/master/src/process.ts)，本项目在 Python 中独立解析，前端使用返回的 UV 和几何数据。
 
 Three.js 与 OrbitControls 使用 MIT 许可证，版本与资源来源见 [第三方说明](skin_statue/web/vendor/README.md)，许可证随资源保留。内置 `demo.png` 为本项目绘制的示例。
+
+结构编码依据 [GTNH WorldEdit SchematicWriter](https://github.com/GTNewHorizons/worldedit-gtnh/blob/master/src/main/java/com/sk89q/worldedit/extent/clipboard/io/SchematicWriter.java)、[SchematicReader](https://github.com/GTNewHorizons/worldedit-gtnh/blob/master/src/main/java/com/sk89q/worldedit/extent/clipboard/io/SchematicReader.java) 与 [GTNH Schematica SchematicAlpha](https://github.com/GTNewHorizons/Schematica/blob/master/src/main/java/com/github/lunatrius/schematica/world/schematic/SchematicAlpha.java)，并只读检查了用户实例已安装 JAR 的对应读取器。NBT 由 nbtlib 编码和读回。

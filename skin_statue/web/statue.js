@@ -101,3 +101,44 @@ export function disposeStatue(mesh) {
   mesh.material.dispose();
   mesh.userData.atlas.dispose();
 }
+
+/** 用当前包围盒和同一导出原点标出 I；辅助线不写入体素。 */
+export function createPlacementGuide(data) {
+  const group = new THREE.Group();
+  const min = new THREE.Vector3(...data.bounds[0]).multiplyScalar(1 / data.scale);
+  const max = new THREE.Vector3(...data.bounds[1]).multiplyScalar(1 / data.scale);
+  const box = new THREE.Box3Helper(new THREE.Box3(min, max), 0x8ae7bb);
+  box.material.transparent = true;
+  box.material.opacity = 0.45;
+  group.add(box);
+  const local = data.placement.anchor_local;
+  const anchor = new THREE.Vector3(...local.map((value, axis) => (value + data.bounds[0][axis]) / data.scale));
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.25, 0.34, 24), new THREE.MeshBasicMaterial({ color: 0x8ae7bb, side: THREE.DoubleSide, depthTest: false }));
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.copy(anchor).add(new THREE.Vector3(0, 0.02, 0));
+  group.add(ring);
+  const canvas = document.createElement("canvas");
+  canvas.width = 128; canvas.height = 64;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#163c30"; context.fillRect(0, 0, 128, 64);
+  context.font = "bold 38px Segoe UI"; context.textAlign = "center";
+  context.fillStyle = "#8ae7bb"; context.fillText("I", 64, 46);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, toneMapped: false }));
+  label.scale.set(1.8, 0.9, 1);
+  label.position.copy(anchor).add(new THREE.Vector3(0.6, 0.8, 0.3));
+  group.add(label);
+  return group;
+}
+
+/** 释放当前生成结果的辅助线与 I 点标签。 */
+export function disposePlacementGuide(group) {
+  group.traverse((object) => {
+    if (!object.isSprite) object.geometry?.dispose();
+    if (object.material) {
+      object.material.map?.dispose();
+      object.material.dispose();
+    }
+  });
+}
