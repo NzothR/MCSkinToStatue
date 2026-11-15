@@ -2,7 +2,7 @@
 
 本地运行的 Minecraft Java 版皮肤 3D 预览工具。Python 解析皮肤，Three.js 渲染标准站姿，皮肤数据与预览资源均保留在本机。
 
-当前实现设计文档中的皮肤导入、解析、双层显示和 PNG 导出。方块匹配、雕像体素生成和 `.schematic` 导出将在后续开发。
+当前提供皮肤解析与预览、实例资源扫描、运行时方块索引导入、逐面调色板浏览和单色匹配。辅助模组用于从 GTNH 客户端导出真实注册信息与已加载纹理。雕像体素生成、雕像 3D 预览和 `.schematic` 导出将在 GTNH 索引验收后开发。
 
 ## 启动
 
@@ -65,13 +65,45 @@ Three.js 0.170.0 和 OrbitControls 已随项目保存，运行时无需访问 CD
 
 预览中的部位开关不改变皮肤 PNG 导出内容。文件通过浏览器下载，遵循浏览器配置的保存位置；上传皮肤不在服务端持久化，也不修改游戏实例或存档。
 
+## 实例方块与调色板
+
+在皮肤预览下方的“实例方块与调色板”面板填写 `.minecraft` 路径并点击“只读扫描实例”。扫描原版客户端 JAR、`mods/`、`mods/1.7.10/`，以及 `options.txt` 中启用的资源包；资源包列表后项优先，未启用的包不参与覆盖。支持 ZIP 资源包与文件夹资源包。
+
+PrismLauncher 的共享 1.7.10 客户端 JAR 会自动定位；其他目录布局可展开“原版 JAR 路径”填写。资源包覆盖优先于基础资源；若多个基础资源提供同名纹理且没有明确覆盖包，会报告歧义，等待运行时索引确认。
+
+静态起步调色板包含 52 个已知原版状态，包括羊毛、染色黏土、木板、石头和金属块等。逐面读取实际资源，不把 PNG 文件数量当作注册方块数量，也不从纹理文件名推测模组 ID。原版起步 ID 来自 1.7.10 固定映射，尚未绑定目标存档。
+
+完整 GTNH 方块信息通过辅助模组导出后，在同一面板点击“导入游戏导出的索引 ZIP”。界面支持按注册名查询、分页查看六面纹理和代表色、查看排除原因、选择颜色和朝向匹配单个方块，以及导出调色板 JSON。调色板保存在本次服务的内存中，重启服务后重新扫描或导入原始 ZIP。
+
+颜色统计只计算可见像素的 RGB 均值、D65 Lab、纹理方差和透明比例，完全透明像素不参与均值。匹配按指定面的 Lab 欧氏距离（CIE76）和纹理方差惩罚排序，目前用于候选查看；整雕像匹配阶段将继续处理多面一致性与色差策略。
+
+默认静态候选需要创造栏确认 Metadata、六面纹理完整、不透明完整立方体、普通渲染、无 TileEntity、无染色／自发光／动画，并排除依赖世界的纹理或颜色，以及匹配到连接纹理规则的状态。被排除的方块仍保留在注册表中，可关闭“仅静态候选”查看原因。
+
+Modernity 等包的 CTM 规则会保留并按 `matchBlocks`、`matchTiles`、数字 ID／Metadata 区间和纹理名筛出相关候选。连接环境、特殊渲染、多层贴图、着色器和动态机器外观需要后续专门适配；当前静态六面数据不表示这些渲染已经复现。存在服务器资源包时，运行时像素仍含其覆盖，但相关外部规则待确认，默认候选会排除。
+
+## 获取 GTNH 运行时索引
+
+辅助模组源码、安装和构建说明见 [block-exporter/README.md](block-exporter/README.md)。本轮构建产物位于 `output/skinstatueindex-0.1.0.jar`。
+
+1. 关闭游戏，把 JAR 放入 GTNH 2.9.0 客户端实例的 `.minecraft/mods/`，然后重新启动游戏。
+2. 选择实际使用的资源包并进入世界。默认等待 60 个客户端 tick 后自动导出一次；保持在世界中，完成后聊天栏显示完整路径。
+3. 从 `.minecraft/skin-statue-index/` 取出完成的 `block-index-时间戳.zip`。未完成的 `.zip.part` 不能导入。
+4. 在本地工具导入该 ZIP，并提供该文件以便继续检查 GTNH 状态和开发雕像生成。
+
+手动命令：`/skinindex export` 开始导出，`/skinindex status` 查看进度，`/skinindex cancel` 取消。改变资源包或切换世界时取消当前任务，资源加载稳定后重新执行导出。修改资源包后需要重新导出以更新调色板。
+
+辅助模组面向 Forge 1.7.10／GTNH 2.9.0 客户端，无 Mixin，不注册方块、物品、配方或网络协议。运行时不放置或更改世界方块。新增／移除 JAR 需要重启客户端。`config/skinstatueindex.cfg` 中 `exportOnFirstWorld` 默认开启，`debugLogging` 默认关闭，修改配置后重启游戏。每个客户端会话只自动导出一次；后续可以手动重复导出。
+
 ## 开发
 
 ```text
 run.py                     启动入口
 skin_statue/core/skin.py    UV、旧皮肤转换、图层解析、PNG 编码
+skin_statue/core/palette.py 逐面颜色、候选筛选和单色匹配
+skin_statue/resources/      实例扫描、CTM 规则、运行时注册表导入
 skin_statue/main.py         FastAPI 解析接口和静态资源服务
 skin_statue/web/            本地界面、Three.js、原创示例
+block-exporter/             Forge 1.7.10 辅助模组
 ```
 
 前后端通过 `POST /api/skin` 通信，提交 multipart 字段 `file`、`model`（`steve` / `alex`）。返回尺寸、布局类型、各部位位置和尺寸、逐面 UV、双层像素统计，以及完整／基础／外层 PNG 数据 URL。后端使用左上角原点的像素矩形；场景采用 Y 向上、+Z 正面、-X 角色右侧，底面 UV 单独反向。模型和文件处理不依赖前端。
@@ -86,9 +118,24 @@ python -m ruff check .
 python -m ruff format --check .
 python -m compileall -q run.py skin_statue
 node --check skin_statue/web/app.js
+node --check skin_statue/web/resources.js
 ```
 
-按项目 skill，本轮不新增或运行自动化测试。人工验收请使用自己的不对称皮肤查看正背面、双手、双腿、头顶和脚底；分别查看基础层、透明帽子／衣服、Alex 手臂和旧版镜像，并检查导出的 PNG 和视角截图。游戏内兼容性验证留待雕像导出阶段。
+按项目 skill，当前开发执行构建和静态检查，不运行自动化或冒烟测试。皮肤预览已由用户确认正常。本轮人工验收包括辅助模组在 GTNH 中进入世界并导出 ZIP，导入后的注册数量与排除报告，以及羊毛／石头／金属块纹理是否符合当前资源包。
+
+资源接口：
+
+| 接口 | 功能 |
+|---|---|
+| `POST /api/resources/scan` | JSON `directory`、可选 `vanilla_jar`；只读扫描并建立原版候选 |
+| `POST /api/resources/index` | multipart `file`；导入辅助模组 ZIP |
+| `GET /api/palettes/{id}/entries` | `search`、`eligible_only`、`offset`、`limit` 查询 |
+| `GET /api/palettes/{id}/textures/{texture_id}` | 颜色计算使用的 PNG |
+| `GET /api/palettes/{id}/export` | 调色板及完整问题报告 JSON |
+| `POST /api/palettes/{id}/match` | JSON `rgb`、`face`、可选 `smoothness` 和 `excluded` |
+| `GET /api/statue/capabilities` | 明确返回整雕像生成尚不可用，记录后续 1～6 倍、32～192 格的生成约定 |
+
+每张不同纹理只分析一次，时间与纹理像素总量线性相关。索引状态建立与状态／表面数量线性相关；单色匹配遍历可用候选，时间 O(P)。索引 ZIP 上限 128 MB，总展开大小上限 512 MB，直接读取且不解压到游戏目录。
 
 ## 参考与第三方资源
 

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "/static/vendor/OrbitControls.js";
+import { initResourcePanel } from "/static/resources.js";
 
 const $ = (selector) => document.querySelector(selector);
 const viewport = $("#viewport");
@@ -372,3 +373,5 @@ try {
   status.textContent = "无法创建 3D 预览。";
   showNotice(`请使用启用硬件加速、支持 WebGL 2 的浏览器。${error.message}`, true);
 }
+
+initResourcePanel();

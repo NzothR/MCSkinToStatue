@@ -1,0 +1,75 @@
+# Skin Statue Index 0.1.0
+
+用于 GTNH 2.9.0（Minecraft 1.7.10／Forge 10.13.4.1614）的客户端辅助模组。导出当前世界连接后的真实方块注册表、数字 ID、Metadata 探测结果、六面静态图标和已加载纹理，供本地工具建立调色板。
+
+## 安装与导出
+
+构建产物：项目根目录 `output/skinstatueindex-0.1.0.jar`，或者本目录 `build/libs/skinstatueindex-0.1.0.jar`。安装发布 JAR；`-dev.jar` 和 `-sources.jar` 用于开发。
+
+关闭游戏，把发布 JAR 放入客户端 `.minecraft/mods/` 后重启。无需安装到服务器。选择你真正使用的资源包，进入世界后保持客户端运行；默认等待 60 个客户端 tick 后自动开始导出。任务按客户端 tick 分段执行，单次约 6 ms 工作预算，每个状态的纹理读取不可再拆分。
+
+聊天栏显示开始和完成信息。完成 ZIP 位于：
+
+```text
+.minecraft/skin-statue-index/block-index-yyyyMMdd-HHmmss-SSS.zip
+```
+
+把完整 ZIP 导入 Skin Statue 工具的“实例方块与调色板”面板。请保留 ZIP，它包含颜色报告未内嵌的 PNG。重复导出创建新时间戳文件。
+
+| 命令 | 行为 |
+|---|---|
+| `/skinindex export` | 在世界内开始导出，不要求服务器 OP 权限 |
+| `/skinindex status` | 显示已处理注册方块数和纹理数 |
+| `/skinindex cancel` | 取消任务，移除该任务未完成的 `.zip.part` |
+
+离开世界、切换维度或重载资源时取消当前任务。稳定后重新执行 `/skinindex export`。完成后切换资源包不会改变旧 ZIP，需重新导出。发生解析问题时，清单保留状态、错误类型及阶段；详细堆栈可通过调试日志查看。
+
+## 配置
+
+首次启动创建 `config/skinstatueindex.cfg`：
+
+- `general.exportOnFirstWorld=true`：每次客户端启动，在第一次进入世界后自动导出一次。关闭后仅使用命令导出。
+- `general.debugLogging=false`：逐状态错误堆栈日志，默认关闭。即使关闭，ZIP 的 `errors` 仍保留每个失败状态的简要信息。
+
+修改上述配置、安装或移除模组后重启游戏。模组没有 Mixin，不新增方块、物品、配方、游戏规则或网络消息，不放置方块或编辑存档数据。输出位于客户端目录；模组按客户端使用场景实现。
+
+## 捕获范围
+
+方块注册表在进入世界后读取，包含注册名和当前连接下的数字 ID。遍历每个方块的 0～15 Metadata，同时读取 `getSubBlocks`，通过物品 Metadata 映射标记创造栏确认的状态。探测到图标表示该调用可读取，最终可放置候选还需要通过筛选。
+
+每个状态记录 `getIcon(side, metadata)` 六面图标、普通立方体／不透明标志、渲染类型、TileEntity、静态染色和发光信息。通过 MCP／SRG 方法名和参数签名识别是否重写世界环境图标或染色方法。草地生物群系色、机器外观、连接环境、复杂模型等保留诊断，默认不进入静态调色板。
+
+纹理优先读取加载后的 sprite 像素。Minecraft 会在上传静态纹理后清除 CPU 数据，因此在 OpenGL 3.0+ 下通过只读帧缓冲读取 sprite 对应的 GPU 图集区域；读取后恢复原有 read framebuffer 和 pixel-pack 状态，并移除各向异性过滤添加的边框。此路径包含启用资源包及游戏生成的纹理。低版本 OpenGL 仅可通过资源管理器恢复标准 sprite；不能解析的生成纹理明确记录为未解析。
+
+动态纹理只留静态帧信息并标记动画。缺失图标不替换成假定的方块纹理。启用资源包的 CTM `.properties` 一并导出，Python 端排除匹配的连接纹理候选。当前没有复现 CTM 选片、多层叠加、自定义渲染、机器状态、生物群系染色、着色器或光照。服务器资源包的基础图集覆盖会被捕获，其连接规则需要额外确认。
+
+## ZIP 协议 v1
+
+```text
+registry.json
+textures/0.png
+textures/1.png
+...
+```
+
+`registry.json` 包含 `format=skin-statue-block-index`、`schema_version=1`、Minecraft／导出器版本、时间、资源包顺序、服务器资源包标志、CTM 规则、`blocks` 和 `errors`。
+
+方块条目包含 `registry_name`、`numeric_id`、`class_name`、`metadata_source`、世界依赖标志和 `states`。状态包含 Metadata、创造栏确认标志、分类属性、六面 `faces`、`status` 和可选错误。面名称采用 `down/up/north/south/west/east`；每面指向 ZIP 内的 PNG，并记录原始 icon 名、像素来源、尺寸、sprite 类和动画标志。
+
+数字 ID 属于导出时的当前注册映射。以后向其他存档导出结构时仍需核对目标存档映射，注册名称继续作为稳定标识。
+
+## 构建与静态检查
+
+使用指定的 Java 25 构建；源码使用 Java 8 API／字节码以兼容目标实例 Java 17～26 的运行选择。未使用系统 `JAVA_HOME`。
+
+```powershell
+# 在项目根目录运行
+.\block-exporter\build.ps1
+
+# 使用其他 Java 25 安装位置
+.\block-exporter\build.ps1 -JdkPath 'D:\CustomLib\your-jdk25'
+```
+
+脚本为当前进程设置 `JAVA_HOME`，Gradle 用户缓存和临时目录均指向项目 `.cache/`，不修改系统环境变量。构建任务为 `assemble -x test`。Minecraft 的反编译／编译辅助任务也显式使用 Java 25，`--release 8` 保留旧 Forge 所需的 API 编译视图。构建不会启动游戏或自动安装模组。
+
+Java 静态检查任务为 `spotlessCheck checkstyleMain`。Gradle 使用 GTNH 官方模板的 convention 插件；来源：[ExampleMod1.7.10](https://github.com/GTNewHorizons/ExampleMod1.7.10)、[GTNHGradle](https://github.com/GTNewHorizons/GTNHGradle)。模板的 MIT 许可见 `TEMPLATE-LICENSE`，Gradle Wrapper 的许可证见 `GRADLE-LICENSE`。游戏和 Forge 源码由构建工具下载到忽略的缓存目录，不随项目提交。

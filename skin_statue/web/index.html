@@ -77,6 +77,22 @@
       </div>
       <footer class="statusbar"><span id="status" role="status" aria-live="polite">正在准备预览…</span><span class="mouse-help">左键旋转 · 滚轮缩放 · 右键平移</span></footer>
       <div id="notice" class="notice" role="alert" hidden></div>
+      <section class="resources-panel" aria-label="实例方块与调色板">
+        <div class="resources-heading"><div><span class="eyebrow">BLOCK RESOURCES</span><h2>实例方块与调色板</h2></div><a id="palette-export" class="download-link" hidden>↓ 导出调色板 JSON</a></div>
+        <p class="hint">扫描实例可读取原版候选及启用的资源包覆盖。导入辅助模组 ZIP 可读取完整运行时注册表。</p>
+        <form id="scan-form" class="scan-form"><label class="sr-only" for="instance-path">实例 .minecraft 路径</label><input id="instance-path" type="text" placeholder="GTNH 实例的 .minecraft 路径" required><button id="scan-instance" type="submit">只读扫描实例</button></form>
+        <details class="resource-advanced"><summary>原版 JAR 路径（未自动找到时填写）</summary><input id="vanilla-jar" type="text" placeholder="1.7.10 客户端 JAR，可选" aria-label="原版客户端 JAR 路径"></details>
+        <div class="resource-actions"><label class="import-index">↥ 导入游戏导出的索引 ZIP<input id="index-file" type="file" accept=".zip,application/zip" hidden></label><span>辅助模组命令：<code>/skinindex export</code></span></div>
+        <div id="resource-status" class="resource-status" role="status" aria-live="polite">尚未扫描实例或导入运行时索引。</div>
+        <div id="resource-summary" class="resource-summary" hidden></div>
+        <div id="palette-browser" hidden>
+          <div class="palette-match"><label>目标颜色 <input id="match-color" type="color" value="#509e99"></label><select id="match-face" aria-label="匹配朝向"><option value="south">正面</option><option value="north">背面</option><option value="up">顶面</option><option value="down">底面</option><option value="east">角色左侧</option><option value="west">角色右侧</option></select><button id="match-color-button">匹配方块</button><span id="match-result" role="status"></span></div>
+          <div class="palette-toolbar"><input id="palette-search" type="search" placeholder="搜索注册名或 Metadata" aria-label="搜索方块"><label><input id="eligible-only" type="checkbox" checked> 仅静态候选</label><span id="palette-count"></span></div>
+          <div id="palette-list" class="palette-list"></div>
+          <div class="palette-pagination"><button id="palette-prev">上一页</button><span id="palette-page"></span><button id="palette-next">下一页</button></div>
+        </div>
+        <p class="hint resource-next-step">当前阶段提供纹理、逐面颜色和静态候选浏览。整雕像生成与雕像预览在 GTNH 运行时索引验收后接入。</p>
+      </section>
     </section>
   </main>
   <noscript>请启用 JavaScript 后使用 3D 皮肤预览。</noscript>
