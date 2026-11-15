@@ -5,6 +5,7 @@ import { createStatue, disposeStatue, createPlacementGuide, disposePlacementGuid
 
 import { initEditor } from "/static/editor.js";
 import { initPoseControls } from "/static/poses.js";
+import { initHeldEditor } from "/static/held-editor.js";
 
 const $ = (selector) => document.querySelector(selector);
 const viewport = $("#viewport");
@@ -37,6 +38,8 @@ let editor = null;
 let poseControls = null;
 let heldGroup = null;
 let renderRequest = 0;
+let serviceStopping = false;
+let heldEditor = null;
 
 /** 导出按钮始终指向当前已显示的生成快照，参数变化不会暗中重新匹配。 */
 function updateExportButtons() {
@@ -91,6 +94,7 @@ function showMode(mode) {
   if (statueMesh) statueMesh.visible = mode === "statue";
   if (placementGuide) placementGuide.visible = mode === "statue" && $("#show-anchor").checked;
   editor?.setVisible(mode === "statue");
+  heldEditor?.setVisible();
   $("#show-skin").classList.toggle("active", mode === "skin");
   $("#show-statue").classList.toggle("active", mode === "statue");
   if (mode === "statue") {
@@ -205,6 +209,7 @@ function displayPose(data) {
   for (const mesh of player.children) {
     mesh.matrixAutoUpdate = false;
     mesh.matrix.fromArray(objects.get(mesh.userData.key.split(":")[0]).matrix);
+    mesh.matrixWorldNeedsUpdate = true;
   }
   if (heldGroup) {
     scene.remove(heldGroup);
@@ -230,7 +235,7 @@ function displayPose(data) {
       const standard=maps.map((map)=>new THREE.MeshStandardMaterial({map,roughness:1,side:THREE.DoubleSide}));
       const flat=maps.map((map)=>new THREE.MeshBasicMaterial({map,side:THREE.DoubleSide}));
       const mesh=new THREE.Mesh(new THREE.BoxGeometry(16,16,16),standard);
-      mesh.matrixAutoUpdate=false;mesh.matrix.fromArray(obj.matrix);mesh.userData={standard,flat};heldGroup.add(mesh);
+      mesh.matrixAutoUpdate=false;mesh.matrix.fromArray(obj.matrix);mesh.userData={standard,flat,hand:obj.id.split("_")[0],restMatrix:mesh.matrix.clone()};heldGroup.add(mesh);
       continue;
     }
     const geometry = obj.thickness > 0 ? new THREE.BoxGeometry(16 / obj.width, 16 / obj.height, obj.thickness) : new THREE.PlaneGeometry(16 / obj.width, 16 / obj.height);
@@ -244,13 +249,14 @@ function displayPose(data) {
       mesh.setMatrixAt(i, world.clone().multiply(translation));
       mesh.setColorAt(i, new THREE.Color().setRGB(r / 255, g / 255, b / 255, THREE.SRGBColorSpace));
     });
-    mesh.userData = { standard, flat };
+    mesh.userData = { standard, flat, hand:obj.id.split("_")[0],restMatrix:mesh.matrix.clone() };
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     heldGroup.add(mesh);
   }
   heldGroup.visible = previewMode === "skin";
   scene.add(heldGroup);
+  heldEditor?.update(data,heldGroup);
   updateVisibility();
 }
 
@@ -296,11 +302,11 @@ function createViewer() {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setClearColor(0x000000, 0);
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(38, 1, 0.1, 1000);
+  camera = new THREE.PerspectiveCamera(38, 1, 0.1, 10000);
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.minDistance = 20;
-  controls.maxDistance = 600;
+  controls.maxDistance = 6000;
   controls.autoRotateSpeed = 1.4;
   controls.target.set(0, 16, 0);
   setView("reset");
@@ -600,12 +606,19 @@ async function loadDemo() {
 
 /** 绑定文件导入、视角、图层和导出等界面交互。 */
 function bindUI() {
+  // 浏览器工具栏刷新、F5、Ctrl+R 和关闭标签页都通过原生离开确认保护当前工作。
+  window.addEventListener("beforeunload", (event) => {
+    if (serviceStopping || (!skin && !statueData)) return;
+    event.preventDefault();
+    event.returnValue = "";
+  });
   $("#stop-server").addEventListener("click",async()=>{
     const button=$("#stop-server");button.disabled=true;button.textContent="正在停止…";
     try {
       const response=await fetch("/api/shutdown",{method:"POST"});
       const result=await response.json();
       if(!response.ok)throw new Error(result.detail);
+      serviceStopping = true;
       renderer.setAnimationLoop(null);
       document.querySelector(".workspace").inert=true;
       button.textContent="服务退出中";
@@ -712,9 +725,17 @@ try {
     workspace: () => poseControls.settings,
   });
   poseControls = initPoseControls({
-    model: () => skin?.model, display: displayPose, changed: markStatueChanged,
+    model: () => skin?.model, display: displayPose,
+    changed: () => { markStatueChanged(); if (skin && previewMode !== "skin") showMode("skin"); heldEditor?.refreshSettings(); },
     palette: () => palette,
     sync: updateGenerateButton, resourcesChanged: refreshConnectedPreview,
+  });
+  heldEditor = initHeldEditor({
+    scene,camera,canvas:renderer.domElement,mode:()=>previewMode,
+    item:(hand)=>poseControls.getHeld(hand),change:(hand,values)=>poseControls.transformHeld(hand,values),
+    notify:showNotice,showSkin:()=>{showMode("skin");controls.autoRotate=false;$("#auto-rotate").checked=false;},
+    dragging:(value)=>{controls.enabled=!value;},
+    pickables:()=>[...(player?.children || []),...(heldGroup?.children || [])],
   });
   void loadDemo();
 } catch (error) {

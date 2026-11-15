@@ -195,3 +195,8 @@ h1 { font-size: 22px; font-weight: 450; letter-spacing: 2px; margin: 8px 0 0; }
 #scene-instance { width: 100%; min-width: 0; }
 #stop-server { white-space: nowrap; font-size: 11px; }
 @media (min-width: 701px) and (max-width: 1000px) { .app-header { gap: 16px; } }
+.held-transform-toolbar { position: absolute; left: 20px; top: 78px; z-index: 3; width: 350px; max-width: calc(100% - 40px); padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: #17262eef; }
+.held-transform-toolbar > div { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; }
+.held-transform-toolbar button { font-size: 11px; padding: 6px; }
+.held-transform-toolbar button.active { border-color: var(--accent); color: var(--accent); }
+.held-transform-toolbar label, .held-transform-toolbar > span { font-size: 10px; color: var(--muted); }

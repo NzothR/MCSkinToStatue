@@ -53,8 +53,10 @@ def posed_voxels(parsed, image, options):
     low = np.min([b[0] for b in boxes], axis=0)
     high = np.max([b[1] for b in boxes], axis=0)
     shape = tuple(high - low)
-    if np.prod(shape) > 12_000_000:
-        raise ValueError("这个姿势的体素范围过大，请降低主体高度。")
+    if np.prod(shape) > 12_000_000 or max(shape) > 2048:
+        raise ValueError(
+            "这个姿势的体素范围过大，请降低主体高度或物品缩放（单轴上限 2048 格、总量 1200 万格）。"
+        )
     occupied = np.zeros(shape, dtype=bool)
     base = np.zeros(shape, dtype=bool)
     targets = np.zeros((*shape, 6, 4), dtype=np.uint8)

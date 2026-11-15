@@ -1,6 +1,11 @@
 const $ = (s) => document.querySelector(s);
 const PARTS = { head: "头部", body: "躯干", right_arm: "右臂", left_arm: "左臂", right_leg: "右腿", left_leg: "左腿" };
 
+/** 预设和旧工程允许整圈角度，界面及接口统一使用 -180～180 度的等价值。 */
+function normalizedRotations(rotations) {
+  return Object.fromEntries(Object.entries(rotations).map(([part, angles]) => [part, angles.map((angle) => ((angle + 180) % 360 + 360) % 360 - 180)]));
+}
+
 /** 姿势与两手装备独立存储，工程恢复及生成读取相同设置。 */
 export function initPoseControls(host) {
   let pose = {};
@@ -12,6 +17,7 @@ export function initPoseControls(host) {
   let catalogSequence = 0;
   let sequence = 0;
   let applying = false;
+  let applyTimer = null;
   const itemRequests = { left: 0, right: 0 };
 
   /** 传递资源和输入错误，已有可见模型保留到新结果就绪。 */
@@ -24,6 +30,7 @@ export function initPoseControls(host) {
 
   /** 每次变化请求同一套服务端矩阵，快速连续操作仅显示最新一次结果。 */
   async function apply() {
+    clearTimeout(applyTimer); applyTimer = null;
     const token = ++sequence;
     if (!host.model()) return;
     applying = true; host.sync();
@@ -38,29 +45,37 @@ export function initPoseControls(host) {
   }
 
   /** 修改角度或装备后标记雕像需要重新生成，但不改变另一部分设置。 */
-  function changed() { host.changed(); void apply(); }
+  function changed() {
+    host.changed();
+    // 每 50ms 提交最新参数；持续按住步进按钮时仍更新，不必等松开或移走焦点。
+    if (applyTimer === null) applyTimer = setTimeout(() => { void apply(); }, 50);
+    $("#pose-status").textContent = "正在更新姿势与持物…";
+    host.sync();
+  }
 
   /** 回填关节数值，不把物品装备覆盖为姿势预设中的内容。 */
   function showAngles() {
     for (const input of document.querySelectorAll("[data-pose-part]")) input.value = pose[input.dataset.posePart]?.[Number(input.dataset.axis)] ?? 0;
   }
   for (const [part, name] of Object.entries(PARTS)) {
-    const row = document.createElement("label"); row.className = "pose-angle-row";
+    const row = document.createElement("div"); row.className = "pose-angle-row";
     const label = document.createElement("span"); label.textContent = name; row.append(label);
     for (let axis = 0; axis < 3; axis++) {
-      const input = document.createElement("input"); input.type = "number"; input.min = -180; input.max = 180; input.step = 1; input.value = 0;
+      const input = document.createElement("input"); input.type = "number"; input.min = -180; input.max = 180; input.step = "any"; input.required = true; input.value = 0;
       input.dataset.posePart = part; input.dataset.axis = axis; input.setAttribute("aria-label", `${name} ${"XYZ"[axis]} 角度`);
-      input.addEventListener("change", () => {
-        if (!input.reportValidity()) return;
+      input.addEventListener("input", () => {
+        if (!input.checkValidity()) return;
         pose[part] = [...(pose[part] || [0, 0, 0])]; pose[part][axis] = Number(input.value);
         $("#pose-preset").value = "custom"; changed();
-      }); row.append(input);
+      });
+      input.addEventListener("change", () => input.reportValidity());
+      row.append(input);
     }
     $("#pose-angles").append(row);
   }
   $("#pose-preset").addEventListener("change", () => {
     const preset = presets.find((p) => p.id === $("#pose-preset").value);
-    if (preset) { pose = structuredClone(preset.rotations); showAngles(); changed(); }
+    if (preset) { pose = normalizedRotations(preset.rotations); showAngles(); changed(); }
   });
 
   /** 用资源包实际图片填充装备，类型可按工具／普通物品／弓独立调整。 */
@@ -70,9 +85,9 @@ export function initPoseControls(host) {
     if (item) { img.src = item.image; img.alt = item.name; }
     $(`#held-${hand}-name`).textContent = item?.name || "空手";
     $(`#held-${hand}-kind`).value = item?.kind || "tool";
-    for (const group of ["offset", "rotation"]) for (let axis=0;axis<3;axis++) {
+    for (const group of ["offset", "rotation", "stretch"]) for (let axis=0;axis<3;axis++) {
       const input=$(`#held-${hand}-${group}-${axis}`);
-      input.value=item?.[group]?.[axis] ?? 0; input.disabled=!item;
+      input.value=item?.[group]?.[axis] ?? (group==="stretch" ? 1 : 0); input.disabled=!item;
     }
     for (const field of ["scale", "thickness"]) {
       const input=$(`#held-${hand}-${field}`);
@@ -86,15 +101,17 @@ export function initPoseControls(host) {
       <select id="held-${hand}" aria-label="${name}物品"><option value="">空手</option></select>
       <select id="held-${hand}-kind" aria-label="${name}持握类型"><option value="tool">工具 / 剑</option><option value="flat">普通物品</option><option value="bow">弓</option><option value="block">立方体方块</option></select>
       <label class="import-index">导入${name} PNG<input id="held-${hand}-file" type="file" accept="image/png,.png" hidden></label>
-      <button id="held-${hand}-clear">清空${name}</button>`;
+      <button id="held-${hand}-edit">可视化修改${name}</button><button id="held-${hand}-clear">清空${name}</button>`;
     $("#held-controls").append(box);
-    for (const [group,label,min,max,step] of [["offset","位移",-64,64,.25],["rotation","旋转",-180,180,1]]) {
+    for (const [group,label,min,max] of [["offset","位移",-64,64],["rotation","旋转",-180,180],["stretch","轴缩放",.01,16]]) {
       const row=document.createElement("div");row.className="pose-angle-row";
       const title=document.createElement("span");title.textContent=label;row.append(title);
       for (let axis=0;axis<3;axis++) {
         const input=document.createElement("input"); input.type="number";input.id=`held-${hand}-${group}-${axis}`;
-        input.min=min;input.max=max;input.step=step;input.value=0;input.disabled=true;input.setAttribute("aria-label",`${name}${label} ${"XYZ"[axis]}`);
-        input.addEventListener("change",()=>{if(!input.reportValidity() || !held[hand])return;held[hand][group]=[...(held[hand][group]||[0,0,0])];held[hand][group][axis]=Number(input.value);changed();});
+        const initial=group==="stretch" ? 1 : 0;
+        input.min=min;input.max=max;input.step="any";input.required=true;input.value=initial;input.disabled=true;input.setAttribute("aria-label",`${name}${label} ${"XYZ"[axis]}`);
+        input.addEventListener("input",()=>{if(!input.checkValidity() || !held[hand])return;held[hand][group]=[...(held[hand][group]||[initial,initial,initial])];held[hand][group][axis]=Number(input.value);changed();});
+        input.addEventListener("change",()=>input.reportValidity());
         row.append(input);
       }
       box.append(row);
@@ -102,8 +119,9 @@ export function initPoseControls(host) {
     for (const [field,label,min,max,step,value] of [["scale","物品缩放",.1,4,.1,1],["thickness","厚度（皮肤像素）",0,8,.25,0]]) {
       const row=document.createElement("label");row.className="setting-row";row.textContent=label;
       const input=document.createElement("input");input.type="number";input.id=`held-${hand}-${field}`;
-      input.min=min;input.max=max;input.step=step;input.value=value;input.disabled=true;
-      input.addEventListener("change",()=>{if(!input.reportValidity() || !held[hand])return;held[hand][field]=Number(input.value);changed();});row.append(input);box.append(row);
+      input.min=min;input.max=max;input.step="any";input.required=true;input.value=value;input.disabled=true;
+      input.addEventListener("input",()=>{if(!input.checkValidity() || !held[hand])return;held[hand][field]=Number(input.value);changed();});
+      input.addEventListener("change",()=>input.reportValidity());row.append(input);box.append(row);
     }
     $(`#held-${hand}`).addEventListener("change", async (event) => {
       const token = ++itemRequests[hand];
@@ -127,6 +145,7 @@ export function initPoseControls(host) {
       $(`#held-${hand}`).value = ""; showHand(hand); changed();
     });
     $(`#held-${hand}-clear`).addEventListener("click", () => { itemRequests[hand]++; delete held[hand]; $(`#held-${hand}`).value = ""; showHand(hand); changed(); });
+    $(`#held-${hand}-edit`).addEventListener("click",()=>window.dispatchEvent(new CustomEvent("edit-held-item",{detail:hand})));
   }
 
   /** 资源重载保留两手当前图片，已有工程不依赖再次读取实例。 */
@@ -184,13 +203,20 @@ export function initPoseControls(host) {
   }).catch((error) => { $("#pose-status").textContent = error.message; });
   void json("/api/scene/resources").then(data=>{showCatalog(data);if(host.palette())return refreshCatalog();}).catch((error) => { $("#scene-resource-status").textContent = error.message; });
   return {
-    get busy() { return applying; },
+    get busy() { return applying || applyTimer !== null; },
     get settings() { return structuredClone({ pose, held }); },
     apply,
+    /** 三维手柄写回同一份设置，数值面板、工程和雕像生成共用。 */
+    transformHeld(hand,values) {
+      Object.assign(held[hand],values);
+      showHand(hand);changed();
+    },
+    getHeld(hand) { return held[hand] ? structuredClone(held[hand]) : null; },
     /** 旧工程没有姿势字段时按站立空手恢复，新工程保留两手 PNG。 */
     async restore(options) {
       sequence++; itemRequests.left++; itemRequests.right++;
-      pose = structuredClone(options.pose || {}); held = structuredClone(options.held || {});
+      pose = normalizedRotations(options.pose || {}); held = structuredClone(options.held || {});
+      for (const item of Object.values(held)) if (item.rotation) item.rotation = normalizedRotations({ item: item.rotation }).item;
       $("#pose-preset").value = Object.keys(pose).length ? "custom" : "standing";
       showAngles(); for (const hand of ["right", "left"]) showHand(hand);
       await apply();

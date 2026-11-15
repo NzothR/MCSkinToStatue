@@ -130,13 +130,13 @@ def scene_objects(parsed, options):
                 transform = scaling(-1, 1, 1) @ transform
             grip = np.array([(-0.5 if slim else -1) * (1 if hand == "right" else -1), -10, -1])
             factor = held.get("scale", 1)
-            transform = (
+            axis_scale = factor * np.array(held.get("stretch", [1, 1, 1]))
+            edit_matrix = (
                 translation(*(grip + held.get("offset", [0, 0, 0])))
                 @ rotation(held.get("rotation", [0, 0, 0]))
-                @ scaling(factor, factor, factor)
-                @ translation(*(-grip))
-                @ transform
+                @ scaling(*axis_scale)
             )
+            transform = edit_matrix @ translation(*(-grip)) @ transform
             thickness = held.get("thickness", 0)
             cube = held["kind"] == "block"
             cube_faces = (
@@ -156,6 +156,9 @@ def scene_objects(parsed, options):
                     "id": hand + "_item",
                     "image": image,
                     "matrix": joint @ translation(*pivot) @ transform,
+                    "edit_frame": joint @ translation(*pivot),
+                    "edit_matrix": edit_matrix,
+                    "grip": grip,
                     "size": np.array([16.0, 16.0, 16.0 if cube else thickness]),
                     "center": np.zeros(3) if cube else np.array([8.0, 8.0, -thickness / 2]),
                     **({"cube_faces": cube_faces} if cube else {}),
@@ -172,6 +175,8 @@ def scene_objects(parsed, options):
     )
     for obj in objects:
         obj["matrix"][1, 3] -= lowest
+        if "edit_frame" in obj:
+            obj["edit_frame"][1, 3] -= lowest
     LOGGER.debug(
         "Pose scene: rotations=%s held=%s floor_offset=%s",
         pose,
@@ -186,6 +191,12 @@ def pose_preview(parsed, options):
     result = []
     for obj in scene_objects(parsed, options):
         row = {"id": obj["id"], "matrix": obj["matrix"].T.reshape(-1).tolist()}
+        if "edit_frame" in obj:
+            row.update(
+                edit_frame=obj["edit_frame"].T.reshape(-1).tolist(),
+                edit_matrix=obj["edit_matrix"].T.reshape(-1).tolist(),
+                grip=obj["grip"].tolist(),
+            )
         if "cube_faces" in obj:
             row["cube"] = {
                 face: {

@@ -49,6 +49,7 @@
       <section class="layer-section">
         <div class="section-heading"><h2>姿势</h2></div>
         <select id="pose-preset" aria-label="盔甲架姿势"><option value="standing">标准站立</option><option value="custom">自定义角度</option></select>
+        <p id="pose-status" class="hint" role="status"></p>
         <details><summary>调整各部位角度</summary><div id="pose-angles"></div></details>
         <p class="hint">X / Y / Z 为关节旋转角度。调整立即作用于皮肤；生成雕像时使用当前姿势。</p>
       </section>
@@ -61,7 +62,6 @@
         <div class="candidate-navigation"><button id="items-prev" disabled>上一页物品</button><button id="items-next" disabled>下一页物品</button></div>
         <div id="held-controls"></div>
         <p class="hint">位移单位为皮肤像素，旋转单位为度；0 厚度显示薄片，生成至少一格。操作只更新皮肤预览，重新生成后才应用到雕像。</p>
-        <p id="pose-status" class="hint" role="status"></p>
       </section>
       <section class="layer-section">
         <div class="section-heading"><span class="step">03</span><h2>皮肤图层</h2></div>
@@ -117,6 +117,11 @@
       <div class="preview-stage">
       <div class="viewport" id="viewport">
         <canvas id="viewer" aria-label="可旋转的 Minecraft 皮肤三维模型" tabindex="0"></canvas>
+        <div id="held-transform-toolbar" class="held-transform-toolbar" hidden>
+          <strong id="held-transform-name">物品编辑</strong>
+          <div><button data-item-transform="translate">位移</button><button data-item-transform="rotate">旋转</button><button data-item-transform="scale">缩放</button><label><input id="held-transform-uniform" type="checkbox" checked> 等比缩放</label><button id="held-transform-done">完成</button></div>
+          <span>拖动红 X／绿 Y／蓝 Z 手柄；位移使用世界轴，旋转和缩放使用握持点局部轴。</span>
+        </div>
         <div class="view-toolbar" aria-label="固定视角">
           <button data-view="front">正面</button><button data-view="back">背面</button><button data-view="left">左侧</button><button data-view="right">右侧</button><button data-view="top">顶部</button><span></span><button data-view="reset" title="重置相机和旋转">↺ 重置</button>
         </div>

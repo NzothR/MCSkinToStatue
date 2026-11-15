@@ -45,6 +45,7 @@ DRAFTS = PROJECT / "drafts"
 SCENE_RESOURCES = {}
 Angle = Annotated[float, Field(ge=-180, le=180)]
 Offset = Annotated[float, Field(ge=-64, le=64)]
+AxisScale = Annotated[float, Field(ge=0.01, le=16)]
 
 
 @app.post("/api/shutdown")
@@ -66,6 +67,7 @@ class HeldItem(BaseModel):
     offset: tuple[Offset, Offset, Offset] = (0, 0, 0)
     rotation: tuple[Angle, Angle, Angle] = (0, 0, 0)
     scale: float = Field(default=1, ge=0.1, le=4)
+    stretch: tuple[AxisScale, AxisScale, AxisScale] = (1, 1, 1)
     thickness: float = Field(default=0, ge=0, le=8)
     rotate_around: bool = False
 
