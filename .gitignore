@@ -1,0 +1,11 @@
+/ref/
+
+__pycache__/
+*.py[cod]
+/.venv/
+/venv/
+/.conda/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
