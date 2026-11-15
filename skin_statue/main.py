@@ -1,5 +1,6 @@
 """FastAPI 本地服务：无持久化的皮肤解析接口和离线前端。"""
 
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -13,12 +14,29 @@ from starlette.concurrency import run_in_threadpool
 
 from skin_statue.core.palette import Palette
 from skin_statue.core.skin import parse_skin
+from skin_statue.core.statue import generate_statue
 from skin_statue.resources.instance import InstanceResources
 from skin_statue.resources.registry import import_runtime_index, vanilla_palette
 
 WEB = Path(__file__).parent / "web"
 app = FastAPI(title="Skin Statue · 皮肤预览", docs_url=None, redoc_url=None)
 PALETTES: dict[str, Palette] = {}
+PROJECT = WEB.parents[1]
+
+
+class StatueOptions(BaseModel):
+    """与实际体素分辨率关联的生成参数。"""
+
+    palette_id: str
+    scale: int = Field(default=3, ge=1, le=6)
+    detail: Literal[1, 2, 4] = 1
+    hollow: bool = True
+    shell_thickness: int = Field(default=1, ge=1, le=4)
+    overlay_offset: int = Field(default=1, ge=1, le=3)
+    alpha_threshold: int = Field(default=128, ge=1, le=255)
+    smoothness: float = Field(default=0.2, ge=0, le=1)
+    excluded: set[str] = Field(default_factory=set)
+    layers: list[str]
 
 
 class ScanRequest(BaseModel):
@@ -102,6 +120,68 @@ async def load_index(file: Annotated[UploadFile, File()]) -> dict:
         await file.close()
 
 
+@app.get("/api/resources/local")
+def local_indexes() -> dict:
+    """列出用户放在项目根目录的运行时索引，文件内容不随 Git 提交。"""
+    return {
+        "files": [
+            {"name": path.name, "size": path.stat().st_size}
+            for path in sorted(PROJECT.glob("block-index-*.zip"))
+        ]
+    }
+
+
+@app.get("/api/resources/loaded")
+def loaded_palettes() -> dict:
+    """让界面使用启动参数预载的调色板。"""
+    return {"palettes": [palette.summary() for palette in PALETTES.values()]}
+
+
+@app.post("/api/resources/local/{filename}")
+async def load_local_index(filename: str) -> dict:
+    """读取用户提供的项目内索引，重复读取同一内容复用已解析调色板。"""
+    files = {path.name: path for path in PROJECT.glob("block-index-*.zip")}
+    if filename not in files:
+        raise HTTPException(404, "项目目录中没有该索引。")
+
+    def load() -> dict:
+        data = files[filename].read_bytes()
+        identity = hashlib.sha256(data).hexdigest()[:20]
+        if identity not in PALETTES:
+            PALETTES[identity] = import_runtime_index(data)
+        return {"palette": PALETTES[identity].summary()}
+
+    try:
+        return await run_in_threadpool(load)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/api/statue/generate")
+async def build_statue(
+    file: Annotated[UploadFile, File()],
+    options: Annotated[str, Form()],
+    model: Annotated[Literal["steve", "alex"], Form()] = "steve",
+) -> dict:
+    """离线生成方块体素与纹理批处理网格，不写入或导出结构文件。"""
+    try:
+        settings = StatueOptions.model_validate_json(options)
+        palette = get_palette(settings.palette_id)
+        data = await file.read(2 * 1024 * 1024 + 1)
+        if len(data) > 2 * 1024 * 1024:
+            raise HTTPException(413, "皮肤文件需小于 2 MB。")
+
+        def build() -> dict:
+            parsed = parse_skin(data, model)
+            return generate_statue(parsed, palette, settings.model_dump(exclude={"palette_id"}))
+
+        return await run_in_threadpool(build)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    finally:
+        await file.close()
+
+
 @app.get("/api/palettes/{identity}/entries")
 def palette_entries(
     identity: str,
@@ -149,7 +229,7 @@ def export_palette(identity: str) -> Response:
 
 @app.post("/api/palettes/{identity}/match")
 def match_color(identity: str, request: MatchRequest) -> dict:
-    """提供朝向相关的 Lab 颜色匹配接口；整雕像生成在 GTNH 索引确认后接入。"""
+    """提供与雕像共用调色板的单色、单朝向 Lab 候选匹配。"""
     if any(channel < 0 or channel > 255 for channel in request.rgb):
         raise HTTPException(422, "RGB 分量必须为 0～255。")
     try:
@@ -162,12 +242,13 @@ def match_color(identity: str, request: MatchRequest) -> dict:
 
 @app.get("/api/statue/capabilities")
 def statue_capabilities() -> dict:
-    """声明下一步生成约定，当前接口如实报告尚未实现整雕像生成。"""
+    """返回可用的生成尺寸和预览能力。"""
     return {
-        "generation_available": False,
-        "status": "awaiting_gtnh_runtime_index_verification",
-        "planned_scales": [1, 2, 3, 4, 5, 6],
-        "planned_base_heights": [32, 64, 96, 128, 160, 192],
+        "generation_available": True,
+        "status": "preview_available",
+        "structure_export_available": False,
+        "scales": [1, 2, 3, 4, 5, 6],
+        "base_heights": [32, 64, 96, 128, 160, 192],
         "palette_match_available": True,
     }
 

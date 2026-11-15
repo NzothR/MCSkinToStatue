@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "/static/vendor/OrbitControls.js";
 import { initResourcePanel } from "/static/resources.js";
+import { createStatue, disposeStatue } from "/static/statue.js";
 
 const $ = (selector) => document.querySelector(selector);
 const viewport = $("#viewport");
@@ -20,6 +21,103 @@ let materials = [];
 let requestId = 0;
 let loading = false;
 const visibility = new Map();
+let statueMesh = null;
+let statueData = null;
+let palette = null;
+let excludedBlocks = [];
+let previewMode = "skin";
+let generating = false;
+let revision = 0;
+
+/** 生成按钮依赖有效皮肤和可用调色板。 */
+function updateGenerateButton() {
+  $("#generate-statue").disabled = !skin || !palette?.eligible || loading || generating;
+}
+
+/** 参数改变后保留上次可看的结果，并明确提示需要重新生成。 */
+function markStatueChanged() {
+  revision++;
+  if (statueData || generating) $("#statue-state").textContent = "参数已改，请重新生成";
+}
+
+/** 用相同的玩家比例切换皮肤和实际方块网格。 */
+function showMode(mode) {
+  if (mode === "statue" && !statueMesh) return;
+  previewMode = mode;
+  if (player) player.visible = mode === "skin";
+  if (statueMesh) statueMesh.visible = mode === "statue";
+  $("#show-skin").classList.toggle("active", mode === "skin");
+  $("#show-statue").classList.toggle("active", mode === "statue");
+  if (mode === "statue") {
+    $("#format-badge").textContent = `${statueData.dimensions.join(" × ")} 格`;
+    status.textContent = `${statueData.block_count.toLocaleString()} 个方块 · ${statueData.materials.length} 种材料 · ${statueData.mesh.quad_count.toLocaleString()} 个合并面`;
+  } else if (skin) {
+    $("#format-badge").textContent = `${skin.legacy ? "LEGACY → 64×64" : "64×64 RGBA"} / ${skin.model.toUpperCase()}`;
+    updateVisibility();
+  }
+  if (grid) {
+    scene.remove(grid);
+    grid.geometry.dispose();
+    grid.material.dispose();
+    const scale = mode === "statue" ? statueData.scale : 1;
+    grid = new THREE.GridHelper(80, mode === "statue" ? 80 * scale : 40, 0x65817b, 0x385257);
+    grid.position.y = mode === "statue" ? statueData.bounds[0][1] / scale - 0.3 : -0.3;
+    grid.material.transparent = true;
+    grid.material.opacity = 0.5;
+    grid.visible = $("#grid-visible").checked;
+    scene.add(grid);
+  }
+}
+
+/** 发送当前皮肤和参数，在后台生成后一次性替换雕像预览。 */
+async function generateStatue() {
+  if (!skin || !palette || generating) return;
+  generating = true;
+  updateGenerateButton();
+  $("#generate-statue").textContent = "正在生成…";
+  $("#statue-state").textContent = "正在计算体素、匹配颜色与合并网格…";
+  const startRevision = revision;
+  const layers = [...visibility].filter(([, enabled]) => enabled).map(([key]) => key);
+  const options = {
+    palette_id: palette.id, scale: Number($("#statue-scale").value), detail: Number($("#statue-detail").value),
+    hollow: $("#statue-hollow").value === "hollow", shell_thickness: Number($("#statue-thickness").value),
+    overlay_offset: Number($("#statue-offset").value), alpha_threshold: Number($("#statue-alpha").value),
+    smoothness: Number($("#statue-smoothness").value), excluded: excludedBlocks, layers,
+  };
+  try {
+    const form = new FormData();
+    form.append("file", currentFile);
+    form.append("model", skin.model);
+    form.append("options", JSON.stringify(options));
+    const response = await fetch("/api/statue/generate", { method: "POST", body: form });
+    const result = await response.json();
+    if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "生成参数无效。");
+    const mesh = await createStatue(result);
+    if (statueMesh) { scene.remove(statueMesh); disposeStatue(statueMesh); }
+    statueMesh = mesh;
+    statueData = result;
+    scene.add(mesh);
+    updateVisibility();
+    $("#show-statue").disabled = false;
+    $("#statue-state").textContent = revision === startRevision ? "生成完成" : "已显示本次结果；参数已改，请重新生成";
+    $("#statue-report").hidden = false;
+    $("#statue-statistics").textContent = `主体高度 ${result.base_height} 格；实际包围尺寸 ${result.dimensions.join(" × ")} 格\n${result.options.hollow ? "空心" : "实心"} · 方块 ${result.block_count.toLocaleString()} · 第二层 ${result.overlay_blocks.toLocaleString()}\n可见单格面 ${result.mesh.exposed_faces.toLocaleString()} → 合并矩形 ${result.mesh.quad_count.toLocaleString()}\n平均 / 最大 Lab 色差 ${result.matching.mean_color_error} / ${result.matching.max_color_error}；内部填充 ${result.matching.interior_block}`;
+    $("#statue-materials").replaceChildren(...result.materials.map((material) => {
+      const row = document.createElement("div");
+      row.textContent = `${material.key} · ID ${material.numeric_id} · ${material.count.toLocaleString()} 块`;
+      return row;
+    }));
+    showMode("statue");
+    showNotice("");
+  } catch (error) {
+    $("#statue-state").textContent = "生成失败，保留上次结果";
+    showNotice(error.message, true);
+  } finally {
+    generating = false;
+    $("#generate-statue").textContent = "重新生成雕像预览";
+    updateGenerateButton();
+  }
+}
 
 /** 显示解析说明或可以直接处理的错误信息。 */
 function showNotice(message, error = false) {
@@ -168,6 +266,7 @@ async function importSkin(file, preserveLayers = false) {
     materials = result.materials;
     skin = parsed;
     currentFile = file;
+    markStatueChanged();
     scene.add(player);
     if (!preserveLayers) visibility.clear();
     for (const part of parsed.parts) {
@@ -186,6 +285,7 @@ async function importSkin(file, preserveLayers = false) {
     buildLayerControls();
     updateVisibility();
     updateAtlas();
+    showMode("skin");
     showNotice(parsed.notes.join(" "));
     if (!preserveLayers) {
       $("#auto-rotate").checked = false;
@@ -202,6 +302,7 @@ async function importSkin(file, preserveLayers = false) {
       loading = false;
       $("#loading").hidden = true;
       $("#export").disabled = !skin;
+      updateGenerateButton();
     }
   }
 }
@@ -231,6 +332,7 @@ function buildLayerControls() {
       label.title = data.pixels ? `${data.pixels} 个有效像素，其中 ${data.translucent_pixels} 个半透明像素` : "此部位没有第二层像素";
       input.addEventListener("change", () => {
         visibility.set(input.dataset.key, input.checked);
+        markStatueChanged();
         updateVisibility();
       });
       label.append(input);
@@ -243,6 +345,10 @@ function buildLayerControls() {
 /** 更新显示、主开关的半选状态及像素统计；不修改底层皮肤数据。 */
 function updateVisibility() {
   if (!player) return;
+  if (statueMesh) {
+    statueMesh.material.uniforms.rawColor.value = $("#flat-color").checked;
+    statueMesh.material.uniforms.plainColor.value = $("#statue-plain").checked;
+  }
   for (const mesh of player.children) {
     mesh.visible = visibility.get(mesh.userData.key) && mesh.userData.pixels > 0;
     mesh.material = $("#flat-color").checked ? mesh.userData.flat : mesh.userData.standard;
@@ -257,7 +363,7 @@ function updateVisibility() {
   }
   const outer = skin.parts.reduce((total, part) => total + part.layers.overlay.pixels, 0);
   const shown = player.children.filter((mesh) => mesh.visible).length;
-  status.textContent = `已解析 6 个部位 · 第二层 ${outer} 像素 · 当前显示 ${shown} 个图层`;
+  if (previewMode === "skin") status.textContent = `已解析 6 个部位 · 第二层 ${outer} 像素 · 当前显示 ${shown} 个图层`;
 }
 
 /** 查看与下载完全同源的纹理图集。 */
@@ -346,6 +452,7 @@ function bindUI() {
         visibility.set(input.dataset.key, input.checked);
       });
       updateVisibility();
+      markStatueChanged();
     });
   }
   document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => {
@@ -356,6 +463,19 @@ function bindUI() {
   $("#grid-visible").addEventListener("change", (event) => { grid.visible = event.target.checked; });
   $("#auto-rotate").addEventListener("change", (event) => { controls.autoRotate = event.target.checked; });
   $("#flat-color").addEventListener("change", updateVisibility);
+  $("#statue-plain").addEventListener("change", updateVisibility);
+  $("#generate-statue").addEventListener("click", () => void generateStatue());
+  $("#show-skin").addEventListener("click", () => showMode("skin"));
+  $("#show-statue").addEventListener("click", () => showMode("statue"));
+  document.querySelectorAll(".statue-settings select, .statue-settings input").forEach((input) => input.addEventListener("change", markStatueChanged));
+  window.addEventListener("palette-loaded", (event) => {
+    palette = event.detail;
+    excludedBlocks = [];
+    $("#statue-palette").textContent = `当前调色板：${palette.eligible.toLocaleString()} 个静态候选`;
+    markStatueChanged();
+    updateGenerateButton();
+  });
+  window.addEventListener("palette-exclusions", (event) => { excludedBlocks = event.detail; markStatueChanged(); });
   $("#atlas-kind").addEventListener("change", updateAtlas);
   $("#export").addEventListener("click", exportPNG);
   $("#demo").addEventListener("click", () => void loadDemo());

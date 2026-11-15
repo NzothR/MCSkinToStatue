@@ -14,6 +14,7 @@ let palette = null;
 let offset = 0;
 let total = 0;
 let pageRequest = 0;
+const excluded = new Set();
 
 /** 读取 JSON API，保留服务返回的具体错误。 */
 async function requestJSON(url, options) {
@@ -33,11 +34,13 @@ function report(message, error = false) {
 function setBusy(value) {
   $("#scan-instance").disabled = value;
   $("#index-file").disabled = value;
+  $("#load-local-index").disabled = value || !$("#local-index").options.length;
 }
 
 /** 展示数据来源与启用资源包顺序，帮助核对实际游戏外观。 */
 async function showPalette(payload) {
   palette = payload.palette;
+  excluded.clear();
   offset = 0;
   $("#palette-search").value = "";
   $("#eligible-only").checked = true;
@@ -62,6 +65,7 @@ async function showPalette(payload) {
   link.hidden = false;
   $("#match-result").textContent = "";
   report(palette.source === "runtime_index" ? "运行时注册表与纹理已导入。" : "实例扫描完成，原版起步调色板已建立。模组注册表请导入游戏索引 ZIP。");
+  window.dispatchEvent(new CustomEvent("palette-loaded", { detail: palette }));
   await loadPage();
 }
 
@@ -96,6 +100,19 @@ function blockCard(entry) {
     faces.append(face);
   }
   card.append(title, meta, faces);
+  if (entry.eligible) {
+    const label = document.createElement("label");
+    label.className = "block-enabled";
+    const enabled = document.createElement("input");
+    enabled.type = "checkbox";
+    enabled.checked = !excluded.has(entry.key);
+    enabled.addEventListener("change", () => {
+      if (enabled.checked) excluded.delete(entry.key); else excluded.add(entry.key);
+      window.dispatchEvent(new CustomEvent("palette-exclusions", { detail: [...excluded] }));
+    });
+    label.append(enabled, "允许用于雕像");
+    card.append(label);
+  }
   if (entry.exclusions.length) {
     const issues = document.createElement("div");
     issues.className = "block-exclusions";
@@ -128,6 +145,26 @@ async function loadPage() {
 
 /** 绑定实例扫描、索引上传、调色板查询及单色匹配。 */
 export function initResourcePanel() {
+  requestJSON("/api/resources/loaded").then((result) => {
+    if (result.palettes.length === 1 && !palette) return showPalette({ palette: result.palettes[0] });
+  }).catch((error) => report(error.message, true));
+  requestJSON("/api/resources/local").then((result) => {
+    const select = $("#local-index");
+    for (const file of result.files) {
+      const option = document.createElement("option");
+      option.value = file.name;
+      option.textContent = file.name;
+      select.append(option);
+    }
+    $("#load-local-index").disabled = !result.files.length;
+  }).catch((error) => report(error.message, true));
+  $("#load-local-index").addEventListener("click", async () => {
+    setBusy(true);
+    report("正在读取项目目录中的 GTNH 索引并建立调色板…");
+    try { await showPalette(await requestJSON(`/api/resources/local/${encodeURIComponent($("#local-index").value)}`, { method: "POST" })); }
+    catch (error) { report(error.message, true); }
+    finally { setBusy(false); }
+  });
   $("#scan-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     setBusy(true);
@@ -162,7 +199,7 @@ export function initResourcePanel() {
     if (!palette) return;
     const rgb = $("#match-color").value.match(/[a-f\d]{2}/gi).map((value) => parseInt(value, 16));
     try {
-      const result = await requestJSON(`/api/palettes/${palette.id}/match`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rgb, face: $("#match-face").value }) });
+      const result = await requestJSON(`/api/palettes/${palette.id}/match`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rgb, face: $("#match-face").value, excluded: [...excluded] }) });
       $("#match-result").textContent = `${result.key} · 匹配代价 ${result.cost}`;
     } catch (error) { $("#match-result").textContent = error.message; }
   });

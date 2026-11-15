@@ -14,3 +14,4 @@ __pycache__/
 **/build/
 /output/
 /block-exporter/run/
+/block-index-*.zip

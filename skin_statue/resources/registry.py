@@ -159,8 +159,8 @@ def import_runtime_index(data: bytes) -> Palette:
                     if block.get(flag)
                 ]
                 number = block["numeric_id"]
-                if not 0 <= number <= 4095:
-                    raise ValueError(f"方块 ID 超出 1.7.10 范围：{number}")
+                if number < 0:
+                    raise ValueError(f"方块 ID 不能为负数：{number}")
                 for state in block["states"]:
                     if not 0 <= state["metadata"] <= 15:
                         raise ValueError("索引 Metadata 必须为 0～15。")
@@ -171,9 +171,12 @@ def import_runtime_index(data: bytes) -> Palette:
                         path = descriptor["path"]
                         if path not in texture_cache:
                             texture_cache[path] = palette.texture(archive.read(path))
+                        icon_name = descriptor["icon_name"]
+                        if ":" not in icon_name:
+                            icon_name = "minecraft:" + icon_name
                         faces[face] = {
                             **texture_cache[path],
-                            "icon_name": descriptor["icon_name"],
+                            "icon_name": icon_name,
                             "animated": descriptor["animated"],
                             "pixel_source": descriptor.get("pixel_source"),
                         }
