@@ -1,10 +1,10 @@
-# Skin Statue Index 0.1.2
+# Skin Statue Index 0.1.3
 
-用于 GTNH 2.9.0（Minecraft 1.7.10／Forge 10.13.4.1614）的客户端辅助模组。导出当前世界连接后的真实方块注册表、数字 ID、Metadata 探测结果、六面静态图标和已加载纹理，供本地工具建立调色板。
+用于 GTNH 2.9.0（Minecraft 1.7.10／Forge 10.13.4.1614）的客户端辅助模组。导出当前世界连接后的真实方块和物品注册表、数字 ID、Metadata／Damage 与 NBT 变体、本地化名称、六面静态图标、多层物品图标和已加载纹理，供本地工具建立调色板。
 
 ## 安装与导出
 
-构建产物：项目根目录 `output/skinstatueindex-0.1.2.jar`，或者本目录 `build/libs/skinstatueindex-0.1.2.jar`。安装发布 JAR；`-dev.jar` 和 `-sources.jar` 用于开发。更新时替换旧版 JAR，重启客户端。现有 0.1.0／0.1.1 索引仍能导入；本地化名称需要重新导出。
+构建产物：项目根目录 `output/skinstatueindex-0.1.3.jar`，或者本目录 `build/libs/skinstatueindex-0.1.3.jar`。安装发布 JAR；`-dev.jar` 和 `-sources.jar` 用于开发。更新时替换旧版 JAR，重启客户端。现有 0.1.0／0.1.1 索引仍能导入；方块本地化名称需要 0.1.2+，物品映射需要 0.1.3 重新导出。
 
 关闭游戏，把发布 JAR 放入客户端 `.minecraft/mods/` 后重启。无需安装到服务器。选择你真正使用的资源包，进入世界后保持客户端运行；默认等待 60 个客户端 tick 后自动开始导出。任务按客户端 tick 分段执行，单次约 6 ms 工作预算，每个状态的纹理读取不可再拆分。
 
@@ -23,6 +23,16 @@
 | `/skinindex cancel` | 取消任务，移除该任务未完成的 `.zip.part` |
 
 离开世界、切换维度或重载资源时取消当前任务。稳定后重新执行 `/skinindex export`。完成后切换资源包不会改变旧 ZIP，需重新导出。发生解析问题时，清单保留状态、错误类型及阶段；详细堆栈可通过调试日志查看。
+
+## 0.1.3 物品映射
+
+原命令和配置保持兼容。方块阶段完成后，继续读取 Item 注册表和每个注册项各创造栏的 `getSubItems`，按 Damage 与 NBT 去重；每个变体记录 `getDisplayName()`、语言键、实际物品 ID、Damage、NBT、多层图标、逐层颜色、是否 Full3D／弓、是否自定义装备渲染，以及物品方块的注册名与 Metadata。未进创造栏的注册物品保存 Damage 0 探测项，并用 `creative_confirmed=false` 标记。物品 Damage 不受方块 0～15 限制。
+
+物品 sprite 从对应物品图集捕获；方块物品仍从方块图集捕获，缓存按图集区分同名图标。动态纹理取首帧。无法读取的变体仍保留注册身份、可获得的名字、失败状态和错误；工具不为它们伪造纹理。名称跟随导出时的客户端语言，图片包含当前加载的资源包覆盖。自定义装备渲染的图标不等于完整装备模型，工具明确以图标近似显示。
+
+ZIP 协议仍为 schema 1，新增可选 `items` 和 `item_registry_count`，旧索引可继续导入。完整项目会保存物品 PNG 与映射，工程重开后可离线选择。导出工作仍按 tick 的约 6 ms 预算推进，每次至少处理一个状态／物品变体，单次创造栏枚举不可拆分；`/skinindex status` 同时显示方块与物品注册项进度。更新 JAR 后重启客户端，再运行 `/skinindex export`。
+
+项目还提供 `python tools/export_item_map.py 索引.zip --output output/item-mapping.json` 提取脚本，只依赖标准库，读取实际导出的映射并保存 JSON。脚本不会启动游戏或猜测 GTNH 动态注册关系。
 
 ## 配置
 

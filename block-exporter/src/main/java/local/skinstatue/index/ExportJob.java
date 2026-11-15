@@ -35,7 +35,11 @@ import net.minecraft.block.BlockDragonEgg;
 import net.minecraft.block.BlockFalling;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+import net.minecraft.client.renderer.texture.TextureMap;
+import net.minecraft.creativetab.CreativeTabs;
 import net.minecraft.item.Item;
+import net.minecraft.item.ItemBlock;
+import net.minecraft.item.ItemBow;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.IIcon;
 import net.minecraft.util.ResourceLocation;
@@ -65,6 +69,12 @@ final class ExportJob {
     private static final String[] FACES = { "down", "up", "north", "south", "west", "east" };
     private final List<String> names = new ArrayList<>();
     private final JsonArray blocks = new JsonArray();
+    private final JsonArray items = new JsonArray();
+    private final List<String> itemNames = new ArrayList<>();
+    private int itemCursor;
+    private int variantCursor;
+    private List<ItemStack> itemVariants;
+    private boolean itemCreative;
     private final JsonArray errors = new JsonArray();
     private final Map<String, JsonObject> textureCache = new HashMap<>();
     private final ZipOutputStream zip;
@@ -93,6 +103,8 @@ final class ExportJob {
         capturedWorld = Minecraft.getMinecraft().theWorld;
         for (Object key : Block.blockRegistry.getKeys()) names.add(key.toString());
         Collections.sort(names);
+        for (Object key : Item.itemRegistry.getKeys()) itemNames.add(key.toString());
+        Collections.sort(itemNames);
         packs = Minecraft.getMinecraft().gameSettings.resourcePacks.toString();
         capturePackRules();
         zip = new ZipOutputStream(new FileOutputStream(partial));
@@ -107,8 +119,12 @@ final class ExportJob {
         long deadline = System.nanoTime() + 6_000_000L;
         do {
             if (blockCursor == names.size()) {
-                finish();
-                return true;
+                if (itemCursor == itemNames.size()) {
+                    finish();
+                    return true;
+                }
+                captureNextItem();
+                continue;
             }
             if (block == null) beginBlock();
             captureState();
@@ -119,6 +135,78 @@ final class ExportJob {
             }
         } while (System.nanoTime() < deadline);
         return false;
+    }
+
+    /** Enumerate real creative variants and capture one stack per tick budget, including NBT names. */
+    private void captureNextItem() throws IOException {
+        String name = itemNames.get(itemCursor);
+        Item item = (Item) Item.itemRegistry.getObject(name);
+        if (itemVariants == null) {
+            List<ItemStack> discovered = new ArrayList<>();
+            try {
+                for (CreativeTabs tab : item.getCreativeTabs()) item.getSubItems(item, tab, discovered);
+            } catch (RuntimeException | LinkageError exception) {
+                recordError(name, -1, "item_variants", exception);
+            }
+            itemVariants = new ArrayList<>();
+            Set<String> seen = new HashSet<>();
+            for (ItemStack stack : discovered) {
+                if (stack == null || stack.getItem() != item) continue;
+                String key = stack.getItemDamage() + ":" + stack.getTagCompound();
+                if (seen.add(key)) itemVariants.add(stack);
+            }
+            itemCreative = !itemVariants.isEmpty();
+            if (itemVariants.isEmpty()) itemVariants.add(new ItemStack(item, 1, 0));
+            variantCursor = 0;
+        }
+        ItemStack stack = itemVariants.get(variantCursor);
+        JsonObject entry = new JsonObject();
+        entry.addProperty("registry_name", name);
+        entry.addProperty("numeric_id", Item.getIdFromItem(item));
+        entry.addProperty("damage", stack.getItemDamage());
+        entry.addProperty("creative_confirmed", itemCreative);
+        if (stack.hasTagCompound()) entry.addProperty(
+            "nbt",
+            stack.getTagCompound()
+                .toString());
+        JsonArray layers = new JsonArray();
+        entry.add("layers", layers);
+        try {
+            entry.addProperty("display_name", stack.getDisplayName());
+            entry.addProperty("unlocalized_name", stack.getUnlocalizedName());
+            entry.addProperty("render_kind", item instanceof ItemBow ? "bow" : item.isFull3D() ? "tool" : "flat");
+            entry.addProperty("rotate_around", item.shouldRotateAroundWhenRendering());
+            entry
+                .addProperty(
+                    "custom_equipped_renderer",
+                    net.minecraftforge.client.MinecraftForgeClient
+                        .getItemRenderer(stack, net.minecraftforge.client.IItemRenderer.ItemRenderType.EQUIPPED)
+                        != null);
+            if (item instanceof ItemBlock) {
+                Block itemBlock = Block.getBlockFromItem(item);
+                entry.addProperty("block_registry_name", Block.blockRegistry.getNameForObject(itemBlock));
+                entry.addProperty("block_metadata", item.getMetadata(stack.getItemDamage()));
+            }
+            int passes = item.requiresMultipleRenderPasses() ? item.getRenderPasses(stack.getItemDamage()) : 1;
+            for (int pass = 0; pass < passes; pass++) {
+                IIcon icon = item.getIcon(stack, pass);
+                if (icon == null) throw new IllegalStateException("Missing item icon pass " + pass);
+                JsonObject layer = new JsonObject();
+                layer.add("texture", captureTexture(icon, stack.getItemSpriteNumber()));
+                layer.addProperty("tint", item.getColorFromItemStack(stack, pass) & 0xffffff);
+                layers.add(layer);
+            }
+            entry.addProperty("status", "captured");
+        } catch (RuntimeException | LinkageError exception) {
+            entry.addProperty("status", "unresolved");
+            entry.addProperty("error", exception.toString());
+            recordError(name, stack.getItemDamage(), "item_icon", exception);
+        }
+        items.add(entry);
+        if (++variantCursor == itemVariants.size()) {
+            itemCursor++;
+            itemVariants = null;
+        }
     }
 
     /** Record every registry entry, with creative-list metadata distinguished from probed states. */
@@ -213,8 +301,14 @@ final class ExportJob {
 
     /** Decode the loaded atlas sprite, which already includes active pack priority and generated textures. */
     private JsonObject captureTexture(IIcon icon) throws IOException {
+        return captureTexture(icon, 0);
+    }
+
+    /** Keep block/item atlas namespaces separate even when icon names coincide. */
+    private JsonObject captureTexture(IIcon icon, int atlasType) throws IOException {
         String name = icon.getIconName();
-        JsonObject cached = textureCache.get(name);
+        String cacheKey = atlasType + ":" + name;
+        JsonObject cached = textureCache.get(cacheKey);
         if (cached != null) return cached;
         if (!(icon instanceof TextureAtlasSprite)) {
             throw new IllegalStateException(
@@ -222,10 +316,13 @@ final class ExportJob {
                     .getName());
         }
         TextureAtlasSprite sprite = (TextureAtlasSprite) icon;
+        TextureMap atlas = atlasType == 0 ? Minecraft.getMinecraft()
+            .getTextureMapBlocks()
+            : (TextureMap) Minecraft.getMinecraft()
+                .getTextureManager()
+                .getTexture(TextureMap.locationItemsTexture);
         if ("missingno".equals(
-            Minecraft.getMinecraft()
-                .getTextureMapBlocks()
-                .getAtlasSprite(name)
+            atlas.getAtlasSprite(name)
                 .getIconName())) {
             throw new IllegalStateException("Icon is not present in the loaded block atlas: " + name);
         }
@@ -245,7 +342,7 @@ final class ExportJob {
             image.setRGB(0, 0, width, height, frame[0], 0, width);
             pixelSource = "loaded_atlas_frame_0";
         } else if (GLContext.getCapabilities().OpenGL30) {
-            image = readAtlas(sprite);
+            image = readAtlas(sprite, atlas);
             pixelSource = "loaded_gpu_atlas";
         } else {
             // Minecraft may discard static sprite CPU pixels after uploading the atlas.
@@ -256,7 +353,7 @@ final class ExportJob {
             ResourceLocation location = new ResourceLocation(name);
             ResourceLocation pngLocation = new ResourceLocation(
                 location.getResourceDomain(),
-                "textures/blocks/" + location.getResourcePath() + ".png");
+                (atlasType == 0 ? "textures/blocks/" : "textures/items/") + location.getResourcePath() + ".png");
             try (InputStream stream = Minecraft.getMinecraft()
                 .getResourceManager()
                 .getResource(pngLocation)
@@ -297,7 +394,7 @@ final class ExportJob {
         ResourceLocation iconLocation = new ResourceLocation(name);
         ResourceLocation metadataLocation = new ResourceLocation(
             iconLocation.getResourceDomain(),
-            "textures/blocks/" + iconLocation.getResourcePath() + ".png.mcmeta");
+            (atlasType == 0 ? "textures/blocks/" : "textures/items/") + iconLocation.getResourcePath() + ".png.mcmeta");
         boolean connected = false;
         try (InputStreamReader reader = new InputStreamReader(
             Minecraft.getMinecraft()
@@ -313,7 +410,7 @@ final class ExportJob {
             // PNG sidecar metadata is optional; absence is an ordinary non-connected texture.
         }
         result.addProperty("connected_texture", connected);
-        textureCache.put(name, result);
+        textureCache.put(cacheKey, result);
         return result;
     }
 
@@ -368,7 +465,7 @@ final class ExportJob {
     }
 
     /** Read only a sprite rectangle from the live atlas; restore read-FBO and pixel-pack state. */
-    private BufferedImage readAtlas(TextureAtlasSprite sprite) {
+    private BufferedImage readAtlas(TextureAtlasSprite sprite, TextureMap atlas) {
         int previous = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
         int buffer = GL11.glGetInteger(GL21.GL_PIXEL_PACK_BUFFER_BINDING);
         int alignment = GL11.glGetInteger(GL11.GL_PACK_ALIGNMENT);
@@ -386,9 +483,7 @@ final class ExportJob {
                 GL30.GL_READ_FRAMEBUFFER,
                 GL30.GL_COLOR_ATTACHMENT0,
                 GL11.GL_TEXTURE_2D,
-                Minecraft.getMinecraft()
-                    .getTextureMapBlocks()
-                    .getGlTextureId(),
+                atlas.getGlTextureId(),
                 0);
             if (GL30.glCheckFramebufferStatus(GL30.GL_READ_FRAMEBUFFER) != GL30.GL_FRAMEBUFFER_COMPLETE) {
                 throw new IllegalStateException("Cannot read the loaded block texture atlas framebuffer");
@@ -466,7 +561,7 @@ final class ExportJob {
         JsonObject root = new JsonObject();
         root.addProperty("format", "skin-statue-block-index");
         root.addProperty("schema_version", 1);
-        root.addProperty("exporter_version", "0.1.2");
+        root.addProperty("exporter_version", "0.1.3");
         root.addProperty("minecraft_version", "1.7.10");
         root.addProperty("language", Minecraft.getMinecraft().gameSettings.language);
         root.addProperty("capture_scope", "static_getIcon_resolved_atlas");
@@ -482,6 +577,8 @@ final class ExportJob {
                 .getResourcePackRepository()
                 .func_148530_e() != null);
         root.add("blocks", blocks);
+        root.add("items", items);
+        root.addProperty("item_registry_count", itemNames.size());
         root.add("errors", errors);
         writeEntry(
             "registry.json",
@@ -528,7 +625,15 @@ final class ExportJob {
 
     /** Return a compact progress message for the manual status command. */
     String progress() {
-        return "Blocks " + blockCursor + "/" + names.size() + "; textures " + textureCache.size();
+        return "Blocks " + blockCursor
+            + "/"
+            + names.size()
+            + "; items "
+            + itemCursor
+            + "/"
+            + itemNames.size()
+            + "; textures "
+            + textureCache.size();
     }
 
     /** Return the final archive path. */

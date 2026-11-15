@@ -22,7 +22,7 @@ import cpw.mods.fml.common.gameevent.TickEvent;
 @Mod(
     modid = "skinstatueindex",
     name = "Skin Statue Index",
-    version = "0.1.2",
+    version = "0.1.3",
     acceptedMinecraftVersions = "[1.7.10]",
     acceptableRemoteVersions = "*")
 public final class SkinStatueIndex {
