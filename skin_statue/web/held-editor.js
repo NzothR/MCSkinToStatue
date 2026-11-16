@@ -25,6 +25,8 @@ export function initHeldEditor(host) {
   let usedHandle = false;
   let start = null;
   let startScale = new THREE.Vector3(1, 1, 1);
+  const startPosition = new THREE.Vector3(), startPlacement = new THREE.Vector3();
+  const renderedPlacement = new THREE.Vector3();
   const ray = new THREE.Raycaster();
 
   /** 只显示皮肤编辑手柄，雕像预览始终保留已生成的状态。 */
@@ -34,10 +36,12 @@ export function initHeldEditor(host) {
     const joint = selectionKind === "joint";
     const cape = joint && selected === "cape";
     control.showX = !cape; control.showY = !cape; control.showZ = true;
-    toolbar.querySelectorAll("[data-item-transform]").forEach((b)=>{b.hidden=joint && b.dataset.itemTransform!=="rotate";});
+    toolbar.querySelectorAll("[data-item-transform]").forEach((b)=>{b.hidden=joint && b.dataset.itemTransform!=="rotate" && !(selected==="body" && b.dataset.itemTransform==="translate");});
     document.querySelector("#held-transform-scale-options").hidden=joint;
     document.querySelector("#joint-transform-reset").hidden=!joint;
-    document.querySelector("#held-transform-hint").textContent=cape ? "仅可拖动蓝色局部 Z 轴旋转环；绕肩背上沿向后扬起 0～120°，位置、缩放与其他轴已锁定。" : joint
+    document.querySelector("#joint-transform-reset").textContent = selected === "body" && control.mode === "translate" ? "重置位置" : "重置关节";
+    document.querySelector("#held-transform-hint").textContent=cape ? "仅可拖动蓝色局部 Z 轴旋转环；绕肩背上沿向后扬起 0～120°，位置、缩放与其他轴已锁定。" : joint && selected === "body"
+      ? "躯干位移和旋转作用于当前整个人物及其装备。位移使用世界轴；重新生成后应用到雕像。" : joint
       ? "拖动红 X／绿 Y／蓝 Z 旋转环；躯干旋转整个模型，手臂旋转会带动对应手持物品。"
       : "拖动红 X／绿 Y／蓝 Z 手柄；位移使用世界轴，旋转和缩放使用握持点局部轴。";
   }
@@ -77,6 +81,7 @@ export function initHeldEditor(host) {
       if (!control.dragging) {
         frame.matrix.fromArray(joints.get(selected).joint_frame);frame.matrixWorldNeedsUpdate=true;
         proxy.position.set(0,0,0);proxy.scale.set(1,1,1);
+        if (selected === "body") proxy.position.fromArray(host.placement()).sub(renderedPlacement).applyMatrix3(new THREE.Matrix3().setFromMatrix4(frame.matrix).invert());
         proxy.rotation.set(...host.joint(selected).map(THREE.MathUtils.degToRad),"ZYX");
       }
       applyDelta();visible();return;
@@ -101,7 +106,7 @@ export function initHeldEditor(host) {
     document.querySelector("#held-transform-name").textContent = hand === "right" ? "编辑右手物品" : "编辑左手物品";
     refreshSettings(); control.attach(proxy); visible();
   }
-  /** 关节仅开放旋转；“躯干”选择模型根节点而非局部身体网格。 */
+  /** 四肢保持绑定旋转；躯干开放整个模型的位移与旋转。 */
   function selectJoint(part) {
     if(!joints.has(part)) {
       const message="当前服务尚未加载关节接口，请先保存工程并重启本地工具。";
@@ -119,12 +124,20 @@ export function initHeldEditor(host) {
 
   control.addEventListener("dragging-changed", (event) => {
     host.dragging(event.value);
-    if (event.value) startScale.copy(proxy.scale);
+    if (event.value) {
+      startScale.copy(proxy.scale); startPosition.copy(proxy.position); startPlacement.fromArray(host.placement());
+    }
     else refreshSettings();
   });
   control.addEventListener("objectChange", () => {
     if (!selected) return;
     if(selectionKind==="joint") {
+      if (selected === "body" && control.mode === "translate") {
+        const basis = new THREE.Matrix3().setFromMatrix4(frame.matrix);
+        const position = proxy.position.clone().sub(startPosition).applyMatrix3(basis).add(startPlacement).clampScalar(-2048,2048);
+        proxy.position.copy(position).sub(startPlacement).applyMatrix3(basis.clone().invert()).add(startPosition);
+        host.move(position.toArray()); applyDelta(); return;
+      }
       if (selected === "cape") proxy.rotation.set(0, 0, THREE.MathUtils.degToRad(THREE.MathUtils.clamp(THREE.MathUtils.radToDeg(proxy.rotation.z), 0, 120)), "ZYX");
       const angles=[proxy.rotation.x,proxy.rotation.y,proxy.rotation.z].map((v)=>((THREE.MathUtils.radToDeg(v)+180)%360+360)%360-180);
       host.rotateJoint(selected,angles);applyDelta();return;
@@ -161,7 +174,7 @@ export function initHeldEditor(host) {
   }, true);
   host.canvas.addEventListener("pointerup", (event) => {
     const down = start; start = null;
-    if (usedHandle) { usedHandle = false; host.dragging(false); return; }
+    if (usedHandle) { event.statueTransformHandled = true; usedHandle = false; host.dragging(false); return; }
     if (!down || down.id !== event.pointerId || host.mode() !== "skin" || Math.hypot(event.clientX - down.x, event.clientY - down.y) > 5) return;
     const p = pointer(event); ray.setFromCamera(new THREE.Vector2(p.x, p.y), host.camera);
     const hit = ray.intersectObjects(host.pickables(), false).find((h) => h.object.visible);
@@ -173,17 +186,22 @@ export function initHeldEditor(host) {
   window.addEventListener("edit-pose-joint",(event)=>selectJoint(event.detail));
   toolbar.querySelectorAll("[data-item-transform]").forEach((b) => b.addEventListener("click", () => {
     if(selectionKind==="item")itemMode=b.dataset.itemTransform;
-    setMode(selectionKind==="joint" ? "rotate" : b.dataset.itemTransform);
+    setMode(selectionKind==="joint" && selected!=="body" ? "rotate" : b.dataset.itemTransform); visible();
   }));
   document.querySelector("#held-transform-done").addEventListener("click", finish);
-  document.querySelector("#joint-transform-reset").addEventListener("click",()=>host.rotateJoint(selected,[0,0,0]));
+  document.querySelector("#joint-transform-reset").addEventListener("click",()=>{
+    if(selected==="body" && control.mode==="translate") host.move([0,0,0]);
+    else host.rotateJoint(selected,[0,0,0]);
+  });
+  window.addEventListener("move-scene-actor",()=>{selectJoint("body");setMode("translate");visible();});
   setMode("translate"); visible();
 
   return {
+    clearSelection: finish,
     refreshSettings, setVisible: visible,
     /** 服务端换入新网格时重新基准化，但拖动期间不覆盖手柄的当前位置。 */
     update(data, meshes) {
-      group = meshes;
+      group = meshes; renderedPlacement.fromArray(data.placement);
       records = new Map(data.objects.filter((o) => o.edit_frame).map((o) => [o.id.split("_")[0], o]));
       joints=new Map(data.objects.filter((o)=>o.joint_frame).map((o)=>[o.id,o]));
       if (selected && !(selectionKind==="joint" ? joints : records).has(selected)) finish();

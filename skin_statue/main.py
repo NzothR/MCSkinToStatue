@@ -15,7 +15,7 @@ from uuid import uuid4
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from starlette.concurrency import run_in_threadpool
 
 from skin_statue.core.cape import read_cape
@@ -30,6 +30,7 @@ from skin_statue.core.editing import (
 from skin_statue.core.item_images import search_items
 from skin_statue.core.palette import DEFAULT_MATCHING, Palette
 from skin_statue.core.pose import pose_preview
+from skin_statue.core.scene import generate_scene
 from skin_statue.core.schematic import PROFILES, export_bundle, placement, schematic_bytes
 from skin_statue.core.skin import PARTS, parse_skin, png_url
 from skin_statue.core.statue import GeneratedStatue, generate_statue
@@ -49,6 +50,9 @@ STATUES: OrderedDict[str, GeneratedStatue] = OrderedDict()
 PROJECT = WEB.parents[1]
 DRAFTS = PROJECT / "drafts"
 SCENE_RESOURCES = {}
+PasteAnchor = Literal[
+    "auto", "northwest", "north", "northeast", "east", "southeast", "south", "southwest", "west"
+]
 Angle = Annotated[float, Field(ge=-180, le=180)]
 Offset = Annotated[float, Field(ge=-64, le=64)]
 AxisScale = Annotated[float, Field(ge=0.01, le=16)]
@@ -106,6 +110,47 @@ class SceneOptions(BaseModel):
     pose: dict[PartName, tuple[Angle, Angle, Angle]] = Field(default_factory=dict)
     held: dict[Literal["left", "right"], HeldItem] = Field(default_factory=dict)
     cape: CapeSettings = Field(default_factory=CapeSettings)
+    placement: tuple[
+        Annotated[float, Field(ge=-2048, le=2048)],
+        Annotated[float, Field(ge=-2048, le=2048)],
+        Annotated[float, Field(ge=-2048, le=2048)],
+    ] = (0, 0, 0)
+    scale_factor: float = Field(default=1, ge=0.25, le=4)
+
+
+class SceneActor(SceneOptions):
+    """每个人物保存完整来源与独立编辑设置。"""
+
+    id: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=80)
+    image: str = Field(
+        max_length=3 * 1024 * 1024, pattern=r"^data:image/png;base64,[A-Za-z0-9+/]+={0,2}$"
+    )
+    model: Literal["steve", "alex"]
+    layers: list[str]
+
+
+class SceneDocument(BaseModel):
+    """头颅仅使用当前单个人物，完整场景可包含多个独立人物。"""
+
+    mode: Literal["full", "head"] = "full"
+    actors: list[SceneActor] = Field(min_length=1, max_length=32)
+    active_id: str
+
+    @model_validator(mode="after")
+    def valid_members(self):
+        """人物 ID 是分组和工作区恢复的身份，头颅只允许一个来源。"""
+        ids = [a.id for a in self.actors]
+        if len(set(ids)) != len(ids) or self.active_id not in ids:
+            raise ValueError("人物 ID 必须唯一，当前人物必须属于场景。")
+        if self.mode == "head" and len(ids) != 1:
+            raise ValueError("头颅模式只支持单个人物。")
+        return self
+
+
+class Workspace(SceneOptions):
+    paste_anchor: PasteAnchor = "auto"
+    scene: SceneDocument | None = None
 
 
 class PoseRequest(SceneOptions):
@@ -113,6 +158,7 @@ class PoseRequest(SceneOptions):
 
     model: Literal["steve", "alex"] = "steve"
     alpha_threshold: int = Field(default=128, ge=1, le=255)
+    generation_mode: Literal["full", "head"] = "full"
 
 
 @app.get("/api/poses")
@@ -134,7 +180,13 @@ async def preview_pose(request: PoseRequest) -> dict:
         }
         for key, _, size, position, _, _ in PARTS
     ]
-    return await run_in_threadpool(pose_preview, {"parts": parts}, request.model_dump())
+    settings = request.model_dump()
+    if request.generation_mode == "head":
+        parts = [p for p in parts if p["id"] == "head"]
+        settings.update(
+            pose={"head": request.pose.get("head", (0, 0, 0))}, held={}, cape={"enabled": False}
+        )
+    return await run_in_threadpool(pose_preview, {"parts": parts}, settings)
 
 
 @app.get("/api/statue/{identity}/render")
@@ -276,12 +328,17 @@ async def replace(identity: str, request: Replacement) -> dict:
 
 @app.get("/api/statue/{identity}/project")
 @app.post("/api/statue/{identity}/project")
-async def save_project(identity: str, workspace: SceneOptions | None = None) -> Response:
+async def save_project(identity: str, workspace: Workspace | None = None) -> Response:
     """下载自带纹理与皮肤的工程文件。"""
     statue = get_statue(identity)
     if workspace is not None:
         statue = replace_snapshot(
-            statue, preview={**statue.preview, "workspace": workspace.model_dump()}
+            statue,
+            preview={
+                **statue.preview,
+                "workspace": workspace.model_dump(),
+                "placement": placement(statue.state_indices.shape, workspace.paste_anchor),
+            },
         )
     data = await run_in_threadpool(project_bytes, statue, get_palette(statue.preview["palette_id"]))
     return Response(
@@ -294,6 +351,10 @@ async def save_project(identity: str, workspace: SceneOptions | None = None) -> 
 def restore_project(data: bytes) -> dict:
     """恢复工程并登记自带调色板，供预览、替换与重新生成共用。"""
     statue, palette = open_project(data)
+    selected = statue.preview.get("workspace", {}).get(
+        "paste_anchor", statue.preview["placement"].get("selection", "auto")
+    )
+    statue.preview["placement"] = placement(statue.state_indices.shape, selected)
     attach_scene_resources(palette)
     rebuild(statue, palette)
     PALETTES[palette.id] = palette
@@ -328,12 +389,17 @@ def drafts() -> dict:
 
 
 @app.post("/api/statue/{identity}/draft")
-async def save_draft(identity: str, workspace: SceneOptions | None = None) -> dict:
+async def save_draft(identity: str, workspace: Workspace | None = None) -> dict:
     """每次保存独立草稿，服务重启后仍可打开。"""
     statue = get_statue(identity)
     if workspace is not None:
         statue = replace_snapshot(
-            statue, preview={**statue.preview, "workspace": workspace.model_dump()}
+            statue,
+            preview={
+                **statue.preview,
+                "workspace": workspace.model_dump(),
+                "placement": placement(statue.state_indices.shape, workspace.paste_anchor),
+            },
         )
 
     def save() -> dict:
@@ -373,6 +439,7 @@ class StatueOptions(SceneOptions):
     """与实际体素分辨率关联的生成参数。"""
 
     palette_id: str
+    paste_anchor: PasteAnchor = "auto"
     scale: int = Field(default=3, ge=1, le=6)
     detail: Literal[1, 2, 4] = 1
     hollow: bool = True
@@ -392,6 +459,37 @@ class MatchingPreferences(BaseModel):
     smoothness: float = Field(default=0.2, ge=0, le=1)
     prefer_connected: bool = False
     matching: MatchingParameters = Field(default_factory=MatchingParameters)
+
+
+class SceneGeneration(StatueOptions):
+    """整体分辨率与选材规则共用，人物来源和绑定设置各自独立。"""
+
+    scene: SceneDocument
+
+
+@app.post("/api/scene/generate")
+async def generate_scene_preview(request: SceneGeneration) -> dict:
+    """生成一个可继续编辑和导出的场景快照。"""
+    palette = get_palette(request.palette_id)
+    document = request.scene.model_dump()
+    options = request.model_dump(exclude={"palette_id", "scene"})
+
+    def build():
+        statue = generate_scene(palette, options, document)
+        first = document["actors"][0]
+        statue.preview.update(
+            source={
+                "filename": first["name"] + ".png",
+                "model": first["model"],
+                "sha256": hashlib.sha256(statue.normalized_skin).hexdigest(),
+            },
+            palette_source=palette.source,
+            resource_packs=palette.resource_packs,
+            placement=placement(statue.state_indices.shape, request.paste_anchor),
+        )
+        return remember(statue)
+
+    return await run_in_threadpool(build)
 
 
 @app.get("/api/preferences")
@@ -727,7 +825,7 @@ async def build_statue(
                     },
                     "palette_source": palette.source,
                     "resource_packs": palette.resource_packs,
-                    "placement": placement(statue.state_indices.shape),
+                    "placement": placement(statue.state_indices.shape, settings.paste_anchor),
                 }
             )
             return remember(statue)
@@ -744,9 +842,15 @@ async def export_statue(
     identity: str,
     profile: Literal["worldedit_gtnh", "mcedit", "schematica_gtnh"] = "worldedit_gtnh",
     bundle: bool = False,
+    anchor: PasteAnchor | None = None,
 ) -> Response:
     """下载指定预览快照的 Schematic 或结构／材料诊断 ZIP。"""
     statue = get_statue(identity)
+    if anchor is not None:
+        statue = replace_snapshot(
+            statue,
+            preview={**statue.preview, "placement": placement(statue.state_indices.shape, anchor)},
+        )
     try:
         payload = await run_in_threadpool(
             export_bundle if bundle else schematic_bytes, statue, profile

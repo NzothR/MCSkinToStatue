@@ -136,37 +136,38 @@ export function disposeStatue(mesh) {
   mesh.userData.texturePages.forEach((map) => map.dispose());
 }
 
-/** 用当前包围盒和同一导出原点标出 I；辅助线不写入体素。 */
+/** 八个吸附站位围绕整体底面中心排列，小人朝中心；辅助几何不写入结构。 */
 export function createPlacementGuide(data) {
   const group = new THREE.Group();
   const min = new THREE.Vector3(...data.bounds[0]).multiplyScalar(1 / data.scale);
   const max = new THREE.Vector3(...data.bounds[1]).multiplyScalar(1 / data.scale);
   const box = new THREE.Box3Helper(new THREE.Box3(min, max), 0x8ae7bb);
-  box.material.transparent = true;
-  box.material.opacity = 0.45;
-  group.add(box);
-  const local = data.placement.anchor_local;
-  const anchor = new THREE.Vector3(...local.map((value, axis) => (value + data.bounds[0][axis]) / data.scale));
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.25, 0.34, 24), new THREE.MeshBasicMaterial({ color: 0x8ae7bb, side: THREE.DoubleSide, depthTest: false }));
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.copy(anchor).add(new THREE.Vector3(0, 0.02, 0));
-  group.add(ring);
-  const canvas = document.createElement("canvas");
-  canvas.width = 128; canvas.height = 64;
-  const context = canvas.getContext("2d");
-  context.fillStyle = "#163c30"; context.fillRect(0, 0, 128, 64);
-  context.font = "bold 38px Segoe UI"; context.textAlign = "center";
-  context.fillStyle = "#8ae7bb"; context.fillText("I", 64, 46);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, toneMapped: false }));
-  label.scale.set(1.8, 0.9, 1);
-  label.position.copy(anchor).add(new THREE.Vector3(0.6, 0.8, 0.3));
-  group.add(label);
+  box.material.transparent = true; box.material.opacity = 0.45; group.add(box);
+  const pointPosition = (local) => new THREE.Vector3((local[0]+data.bounds[0][0]+.5)/data.scale,(local[1]+data.bounds[0][1])/data.scale,(local[2]+data.bounds[0][2]+.5)/data.scale);
+  for(const [id,point] of Object.entries(data.placement.points)) {
+    const selected=id===data.placement.anchor;
+    const ring=new THREE.Mesh(new THREE.RingGeometry(selected ? 0.3 : 0.2,selected ? 0.55 : 0.4,24),new THREE.MeshBasicMaterial({color:selected?0xffdf78:0x8ae7bb,side:THREE.DoubleSide,depthTest:false}));
+    ring.rotation.x=-Math.PI/2;ring.position.copy(pointPosition(point.position));ring.position.y+=.03;
+    ring.userData.anchorPoint=id; ring.renderOrder=10; group.add(ring);
+  }
+  const avatar=new THREE.Group();
+  const body=(size,position,color)=>{
+    const mesh=new THREE.Mesh(new THREE.BoxGeometry(...size),new THREE.MeshBasicMaterial({color,depthTest:false}));
+    mesh.position.set(...position);mesh.renderOrder=11;mesh.userData.anchorPoint=data.placement.anchor;avatar.add(mesh);
+  };
+  body([.45,.45,.45],[0,1.58,0],0xffdf78);
+  body([.5,.65,.25],[0,1.03,0],0x8ae7bb);
+  for(const x of [-.16,.16])body([.2,.7,.25],[x,.35,0],0x658caa);
+  for(const x of [-.38,.38])body([.2,.65,.25],[x,1.03,0],0x8ae7bb);
+  for(const x of [-.1,.1])body([.065,.065,.02],[x,1.63,.235],0x17262e);
+  avatar.position.copy(pointPosition(data.placement.anchor_local));
+  const center=new THREE.Vector3((data.bounds[0][0]+data.placement.center[0])/data.scale,avatar.position.y,(data.bounds[0][2]+data.placement.center[2])/data.scale);
+  if(center.distanceToSquared(avatar.position)>0)avatar.lookAt(center);
+  group.add(avatar);
   return group;
 }
 
-/** 释放当前生成结果的辅助线与 I 点标签。 */
+/** 释放当前生成结果的辅助线、吸附点与站位小人。 */
 export function disposePlacementGuide(group) {
   group.traverse((object) => {
     if (!object.isSprite) object.geometry?.dispose();

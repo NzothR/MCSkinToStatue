@@ -41,6 +41,42 @@ def rebuild(statue: GeneratedStatue, palette: Palette) -> None:
         ],
         key=lambda e: -e["count"],
     )
+    if statue.preview.get("groups"):
+        flat = statue.group_indices.ravel()
+        occupied = np.flatnonzero(flat >= 0)
+        # 分组编号紧凑；计数和归约一次扫描体素，避免按人物重复扫描整个场景。
+        counts = np.bincount(flat[occupied], minlength=len(statue.preview["groups"]))
+        first = np.full(len(counts), len(flat), dtype=np.intp)
+        np.minimum.at(first, flat[occupied], occupied)
+        ids = np.flatnonzero(counts)
+        current = statue.state_indices.ravel()[first[ids]]
+        actors = {}
+        for group, index, count in zip(ids, current, counts[ids], strict=True):
+            info = statue.preview["groups"][str(int(group))]
+            entry = statue.states[int(index)]
+            actor = actors.setdefault(
+                info["actor_id"],
+                {"id": info["actor_id"], "name": info["actor_name"], "materials": {}},
+            )
+            material = actor["materials"].setdefault(
+                entry["key"],
+                {
+                    **{k: entry.get(k) for k in ("key", "display_name", "numeric_id", "metadata")},
+                    "count": 0,
+                },
+            )
+            material["count"] += int(count)
+        statue.preview["actor_materials"] = [
+            {**actor, "materials": sorted(actor["materials"].values(), key=lambda m: -m["count"])}
+            for actor in actors.values()
+        ]
+
+
+def group_info(statue: GeneratedStatue, group: int) -> dict:
+    """多人分组有独立来源，旧工程继续按原材料槽位解释。"""
+    if statue.preview.get("groups"):
+        return statue.preview["groups"][str(group)]
+    return {"key": statue.states[group]["key"]}
 
 
 def block_at(statue: GeneratedStatue, position: tuple[int, int, int]) -> dict:
@@ -61,7 +97,8 @@ def block_at(statue: GeneratedStatue, position: tuple[int, int, int]) -> dict:
         "count": count,
         "position": position,
         "group": group,
-        "origin": statue.states[group]["key"],
+        "origin": group_info(statue, group)["key"],
+        "actor_name": group_info(statue, group).get("actor_name"),
     }
 
 
@@ -72,7 +109,7 @@ def ranked_candidates(
     source = next((e for e in statue.states if e["key"] == key), None)
     if source is None or not any(m["key"] == key for m in statue.preview["materials"]):
         raise ValueError("雕像中没有该材料。")
-    if not 0 <= group < len(statue.states) or not np.any(statue.group_indices == group):
+    if group < 0 or not np.any(statue.group_indices == group):
         raise ValueError("替换分组不存在。")
     options = statue.preview["options"]
     entries = palette.candidates(options["prefer_connected"], options["excluded"])
@@ -82,7 +119,8 @@ def ranked_candidates(
     raw = np.zeros(len(entries))
     texture_penalty = np.zeros(len(entries))
     connection_strength = np.zeros(len(entries))
-    samples = statue.match_targets.get(statue.states[group]["key"])
+    origin = group_info(statue, group)["key"]
+    samples = statue.match_targets.get(str(group) if statue.preview.get("groups") else origin)
     if samples:
         total = sum(count for _, count in samples)
         for signature, count in samples:
@@ -96,7 +134,7 @@ def ranked_candidates(
             connection_strength += (connection * weights).sum(axis=1) * weight
     else:
         # 仅内部填充材料没有皮肤表面目标，按其原始六面颜色排列替代项。
-        original = statue.states[group]
+        original = next(e for e in statue.states if e["key"] == origin)
         target = np.array([original["faces"][f]["lab"] for f in FACES])
         raw = np.linalg.norm(labs - target, axis=2).mean(axis=1)
         texture_penalty = penalty.mean(axis=1)
@@ -256,10 +294,14 @@ def open_project(data: bytes) -> tuple[GeneratedStatue, Palette]:
             )
             if (
                 groups.min() < -1
-                or groups.max() >= len(states)
+                or (not root["preview"].get("groups") and groups.max() >= len(states))
                 or not np.array_equal(groups >= 0, blocks >= 0)
             ):
                 raise ValueError("工程替换分组与体素不符。")
+            if root["preview"].get("groups") and any(
+                str(int(g)) not in root["preview"]["groups"] for g in np.unique(groups[groups >= 0])
+            ):
+                raise ValueError("工程缺少人物材料分组。")
             preview = root["preview"]
             if "groups.i32" not in archive.namelist():
                 preview["legacy_groups"] = True

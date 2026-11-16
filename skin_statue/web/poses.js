@@ -16,6 +16,7 @@ function normalizedRotations(rotations) {
 /** 姿势与两手装备独立存储，工程恢复及生成读取相同设置。 */
 export function initPoseControls(host) {
   let pose = {};
+  let placement = [0, 0, 0], scale_factor = 1;
   let held = {};
   let cape = { library: [], selected: null, enabled: true, angle: 10 };
   let presets = [];
@@ -49,7 +50,7 @@ export function initPoseControls(host) {
     applying = true; host.sync();
     try {
       const result = await json("/api/pose", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: host.model(), pose, held, cape: {...cape, library: cape.library.filter((c) => c.id === cape.selected)}, alpha_threshold: Number($("#statue-alpha").value) }) });
+        body: JSON.stringify({ model: host.model(), pose, held, placement, scale_factor, generation_mode: $("#generation-mode").value, cape: {...cape, library: cape.library.filter((c) => c.id === cape.selected)}, alpha_threshold: Number($("#statue-alpha").value) }) });
       if (token !== sequence) return;
       host.display(result);
       $("#pose-status").textContent = "姿势与持物已更新；生成雕像使用这些设置。";
@@ -311,7 +312,8 @@ export function initPoseControls(host) {
   void refreshCatalog().catch((error) => { $("#scene-resource-status").textContent = error.message; });
   return {
     get busy() { return applying || applyTimer !== null; },
-    get settings() { return structuredClone({ pose, held, cape }); },
+    get settings() { return structuredClone({ pose, held, cape, placement, scale_factor }); },
+    setPlacement(values) { placement = values.placement; scale_factor = values.scale_factor; changed(); },
     addCapes,
     apply,
     /** 三维手柄写回同一份设置，数值面板、工程和雕像生成共用。 */
@@ -324,6 +326,7 @@ export function initPoseControls(host) {
     getJoint(part) { return part === "cape" ? [0, 0, cape.angle] : [...(pose[part] || [0,0,0])]; },
     /** 旧工程没有姿势字段时按站立空手恢复，新工程保留两手 PNG。 */
     async restore(options) {
+      placement = [...(options.placement || [0, 0, 0])]; scale_factor = options.scale_factor ?? 1;
       sequence++; itemRequests.left++; itemRequests.right++;
       selectionRequest++; selectedItem = null; selectedKey = null;
       pose = normalizedRotations(options.pose || {}); held = structuredClone(options.held || {});

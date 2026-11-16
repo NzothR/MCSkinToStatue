@@ -28,7 +28,7 @@ class GeneratedStatue:
     normalized_skin: bytes
     # 每种材料对应的原皮肤颜色签名及频次，用于编辑时重新排列候选。
     match_targets: dict
-    # 生成时的材质槽位固定为替换分组；后续材质相同也不会合并范围。
+    # 原始材料分组固定；多人使用独立分组编号，身份描述保存在 preview.groups。
     group_indices: np.ndarray
 
 
@@ -151,6 +151,7 @@ def match_surface(occupied, targets, palette, options):
         candidates,
         {
             "unique_color_groups": len(unique),
+            "surface_voxels": int(surface.sum()),
             "method": "uniform-building-v4",
             "building_preference": options.get("matching", {}).get("building", 1),
             "ctm_available": sum(
@@ -275,8 +276,19 @@ def greedy_mesh(blocks, lookup, origin, overrides=None):
     }
 
 
-def generate_statue(parsed: dict, palette: Palette, options: dict) -> GeneratedStatue:
+def generate_statue(
+    parsed: dict, palette: Palette, options: dict, build_mesh: bool = True
+) -> GeneratedStatue:
     """生成实际方块体素并返回批处理预览网格、材料统计与生成参数。"""
+    if options.get("head_only"):
+        parsed = {**parsed, "parts": [p for p in parsed["parts"] if p["id"] == "head"]}
+        options = {
+            **options,
+            "pose": {"head": options.get("pose", {}).get("head", [0, 0, 0])},
+            "held": {},
+            "cape": {"enabled": False},
+            "layers": [k for k in options["layers"] if k.startswith("head:")],
+        }
     scale = options["scale"]
     parts = parsed["parts"]
     offset = max(
@@ -292,6 +304,11 @@ def generate_statue(parsed: dict, palette: Palette, options: dict) -> GeneratedS
     )
     articulated |= bool(
         options.get("cape", {}).get("enabled", True) and options.get("cape", {}).get("selected")
+    )
+    articulated |= bool(
+        options.get("head_only")
+        or any(options.get("placement", []))
+        or options.get("scale_factor", 1) != 1
     )
     if articulated:
         low, occupied, base, targets = posed_voxels(parsed, image, options)
@@ -355,7 +372,11 @@ def generate_statue(parsed: dict, palette: Palette, options: dict) -> GeneratedS
     counts = np.bincount(blocks[occupied], minlength=len(candidates))
     from skin_statue.core.connected_preview import preview_mesh
 
-    atlas, mesh, ctm = preview_mesh(blocks, candidates, palette, low)
+    atlas, mesh, ctm = (
+        preview_mesh(blocks, candidates, palette, low)
+        if build_mesh
+        else ({}, {"quad_count": 0}, {})
+    )
     materials = [
         {
             "key": entry["key"],
@@ -372,7 +393,7 @@ def generate_statue(parsed: dict, palette: Palette, options: dict) -> GeneratedS
     result = {
         "palette_id": palette.id,
         "scale": scale,
-        "base_height": 32 * scale,
+        "base_height": (8 if options.get("head_only") else 32) * scale,
         "bounds": [b.tolist() for b in bounds],
         "dimensions": (bounds[1] - bounds[0]).tolist(),
         "block_count": int(occupied.sum()),

@@ -6,6 +6,7 @@ import { createStatue, disposeStatue, createPlacementGuide, disposePlacementGuid
 import { initEditor } from "/static/editor.js";
 import { initPoseControls } from "/static/poses.js";
 import { initHeldEditor } from "/static/held-editor.js";
+import { initSceneEditor } from "/static/scene.js";
 
 const $ = (selector) => document.querySelector(selector);
 const matchingInputs = [...document.querySelectorAll(".matching-controls input")];
@@ -134,6 +135,7 @@ let heldGroup = null;
 let renderRequest = 0;
 let serviceStopping = false;
 let heldEditor = null;
+let sceneEditor = null;
 
 /** 导出按钮始终指向当前已显示的生成快照，参数变化不会暗中重新匹配。 */
 function updateExportButtons() {
@@ -149,15 +151,15 @@ async function exportStatue(bundle) {
   const filename = `statue-${snapshot.statue_id.slice(0, 8)}-${profile}.${bundle ? "zip" : "schematic"}`;
   exporting = true;
   updateExportButtons();
-  $("#statue-export-hint").textContent = "正在编码结构并读回校验 ID、Metadata 和 I 点原点…";
+  $("#statue-export-hint").textContent = "正在编码结构并读回校验 ID、Metadata 和粘贴站位…";
   try {
-    const response = await fetch(`/api/statue/${snapshot.statue_id}/export?profile=${profile}&bundle=${bundle}`);
+    const response = await fetch(`/api/statue/${snapshot.statue_id}/export?profile=${profile}&bundle=${bundle}&anchor=${$("#paste-anchor").value}`);
     if (!response.ok) {
       const error = await response.json();
       throw new Error(error.detail);
     }
     download(URL.createObjectURL(await response.blob()), filename, true);
-    $("#statue-export-hint").textContent = profile === "schematica_gtnh" ? `已导出 ${filename}。在 Schematica 中启用 SchematicPlus，并用其 GUI 定位。` : `已导出 ${filename}。站在 I 点：//schem load mcedit statue-${snapshot.statue_id.slice(0, 8)}-${profile}，然后 //paste -a。正面朝南。`;
+    $("#statue-export-hint").textContent = profile === "schematica_gtnh" ? `已导出 ${filename}。在 Schematica 中启用 SchematicPlus，并用其 GUI 定位。` : `已导出 ${filename}。站在所选位置：//schem load mcedit statue-${snapshot.statue_id.slice(0, 8)}-${profile}，然后 //paste -a。朝向整体中心；普通粘贴保持坐标方向。`;
   } catch (error) {
     $("#statue-export-hint").textContent = error.message;
     showNotice(error.message, true);
@@ -169,8 +171,9 @@ async function exportStatue(bundle) {
 
 /** 生成按钮依赖有效皮肤和可用调色板。 */
 function updateGenerateButton() {
+  sceneEditor?.sync();
   const count = (palette?.eligible ?? 0) + ($("#statue-connected").checked ? (palette?.connected_eligible ?? 0) : 0);
-  $("#generate-statue").disabled = !skin || !count || loading || generating || editor?.busy || poseControls?.busy;
+  $("#generate-statue").disabled = !skin || !count || loading || generating || editor?.busy || poseControls?.busy || sceneEditor?.busy;
 }
 
 /** 参数改变后保留上次可看的结果，并明确提示需要重新生成。 */
@@ -187,6 +190,7 @@ function showMode(mode) {
   if (heldGroup) heldGroup.visible = mode === "skin";
   if (statueMesh) statueMesh.visible = mode === "statue";
   if (placementGuide) placementGuide.visible = mode === "statue" && $("#show-anchor").checked;
+  sceneEditor?.visible();
   editor?.setVisible(mode === "statue");
   heldEditor?.setVisible();
   $("#show-skin").classList.toggle("active", mode === "skin");
@@ -214,7 +218,7 @@ function showMode(mode) {
 
 /** 发送当前皮肤和参数，在后台生成后一次性替换雕像预览。 */
 async function generateStatue() {
-  if (!skin || !palette || generating || editor?.busy || poseControls?.busy) return;
+  if (!skin || !palette || generating || editor?.busy || poseControls?.busy || sceneEditor?.busy) return;
   for (const input of matchingInputs) {
     input.required = true;
     if (!input.reportValidity()) return;
@@ -232,14 +236,10 @@ async function generateStatue() {
     overlay_offset: Number($("#statue-offset").value), alpha_threshold: Number($("#statue-alpha").value),
     smoothness: Number($("#statue-smoothness").value), excluded: excludedBlocks, layers,
     prefer_connected: $("#statue-connected").checked,
-    matching: matchingSettings(),
+    matching: matchingSettings(), paste_anchor: $("#paste-anchor").value,
   };
   try {
-    const form = new FormData();
-    form.append("file", currentFile);
-    form.append("model", skin.model);
-    form.append("options", JSON.stringify(options));
-    const response = await fetch("/api/statue/generate", { method: "POST", body: form });
+    const response = await fetch("/api/scene/generate", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({...options, scene: sceneEditor.document()}) });
     const result = await response.json();
     if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "生成参数无效。");
     await displayStatue(result);
@@ -268,11 +268,8 @@ async function displayStatue(result) {
   statueMesh = mesh;
   statueData = result;
   scene.add(mesh);
-  if (placementGuide) { scene.remove(placementGuide); disposePlacementGuide(placementGuide); }
-  placementGuide = createPlacementGuide(result);
-  scene.add(placementGuide);
+  updatePlacementGuide();
   updateExportButtons();
-  $("#statue-export-hint").textContent = `I 点：局部坐标 ${result.placement.anchor_local.join(", ")}。正面朝南（+Z），I 在东南角。`;
   updateVisibility();
   $("#show-statue").disabled = false;
   $("#statue-state").textContent = result.edits?.length ? `已编辑 ${result.edits.length} 次` : "生成完成";
@@ -281,17 +278,32 @@ async function displayStatue(result) {
   if (["uniform-building-v4", "uniform-seam-ctm-v3", "border-grain-ctm-v2"].includes(result.matching.method)) {
     $("#statue-statistics").textContent += `\n${result.matching.method === "border-grain-ctm-v2" ? "匹配已考虑边框与颗粒" : "匹配已考虑颜色均匀度、平铺接缝与颗粒"}${result.matching.method === "uniform-building-v4" ? ` · 建筑材料优先强度 ${result.matching.building_preference}` : ""}；可用连接图材料 ${result.matching.ctm_available} 种，初次选用 ${result.matching.ctm_selected} 种`;
   }
-  $("#statue-materials").replaceChildren(...result.materials.map((material) => {
+  const materialRows = result.actor_materials ? result.actor_materials.flatMap((actor) => actor.materials.map((m) => ({...m, actor_name: actor.name}))) : result.materials;
+  $("#statue-materials").replaceChildren(...materialRows.map((material) => {
     const row = document.createElement("div");
-    row.textContent = `${material.display_name ? material.display_name + " · " : ""}${material.key} · ID ${material.numeric_id} · ${material.count.toLocaleString()} 块`;
+    row.textContent = `${material.actor_name ? "[" + material.actor_name + "] " : ""}${material.display_name ? material.display_name + " · " : ""}${material.key} · ID ${material.numeric_id} · ${material.count.toLocaleString()} 块`;
     return row;
   }));
   showMode("statue");
   $("#ctm-preview-status").textContent = !result.ctm?.enabled ? "连接纹理预览已关闭。" : `连接纹理：${result.ctm.connected_faces.toLocaleString()} 个暴露面。${result.ctm.unsupported_materials.length ? `${result.ctm.unsupported_materials.length} 种材料缺少支持的连接图，显示基础纹理；可从实例载入 CTM 资源。` : ""}`;
   const notices = [];
+  if (result.overlap_blocks) notices.push(`人物重叠 ${result.overlap_blocks.toLocaleString()} 格，已保留列表中靠前人物的方块。`);
   if (result.options.prefer_connected && result.matching.ctm_available === 0) notices.push("尚未加载可用连接图；请从相同资源包的客户端实例载入连接纹理后重新生成，以按连接效果选材。");
   if (result.legacy_groups) notices.push("旧工程按打开时的材质建立固定分组；此前已合并的范围需要重新生成才能恢复原始分组。");
   showNotice(notices.join(" "));
+}
+
+/** 站位只改变导出偏移和辅助小人，保留当前实际方块与材料编辑历史。 */
+function updatePlacementGuide() {
+  if (!statueData) return;
+  const selection=$("#paste-anchor").value;
+  const id=selection==="auto" ? statueData.placement.default_anchor : selection;
+  const point=statueData.placement.points[id];
+  statueData.placement={...statueData.placement,selection,anchor:id,label:point.label,anchor_local:point.position,offset:point.position.map((v)=>-v)};
+  if(placementGuide){scene.remove(placementGuide);disposePlacementGuide(placementGuide);}
+  placementGuide=createPlacementGuide(statueData);scene.add(placementGuide);
+  placementGuide.visible=previewMode==="statue" && $("#show-anchor").checked;
+  $("#statue-export-hint").textContent=`粘贴站位：${point.label} · 局部格坐标 ${point.position.join(", ")}；底面几何中心 ${statueData.placement.center.join(", ")}。小人朝向整体中心。`;
 }
 
 /** 切换仅影响当前网格的纹理，不重新匹配材料或修改体素快照。 */
@@ -313,7 +325,9 @@ function displayPose(data) {
   const objects = new Map(data.objects.map((o) => [o.id, o]));
   for (const mesh of player.children) {
     mesh.matrixAutoUpdate = false;
-    mesh.matrix.fromArray(objects.get(mesh.userData.key.split(":")[0]).matrix);
+    const obj = objects.get(mesh.userData.key.split(":")[0]);
+    if (!obj) continue;
+    mesh.matrix.fromArray(obj.matrix);
     mesh.userData.restMatrix = mesh.matrix.clone();
     mesh.matrixWorldNeedsUpdate = true;
   }
@@ -363,15 +377,21 @@ function displayPose(data) {
   heldGroup.visible = previewMode === "skin";
   scene.add(heldGroup);
   heldEditor?.update(data,heldGroup);
+  sceneEditor?.tagActive();
   updateVisibility();
 }
 
 /** 恢复工程的模型、生成参数、调色板和图层，然后显示已编辑的体素。 */
 async function restoreProject(payload) {
   const result = payload.statue;
+  $("#paste-anchor").value = result.workspace?.paste_anchor || result.placement.selection;
   modelInputs.forEach((input) => { input.checked = input.value === result.source.model; input.disabled = false; });
-  const blob = await (await fetch(payload.skin)).blob();
-  if (!await importSkin(new File([blob], result.source.filename || "project-skin.png", { type: "image/png" }))) throw new Error("工程皮肤无法打开。");
+  const sceneDoc = result.workspace?.scene || result.scene;
+  if (!sceneDoc) {
+    sceneEditor.reset();
+    const blob = await (await fetch(payload.skin)).blob();
+    if (!await importSkin(new File([blob], result.source.filename || "project-skin.png", { type: "image/png" }))) throw new Error("工程皮肤无法打开。");
+  }
   await showPalette({ palette: payload.palette });
   const settings = result.options;
   for (const input of matchingInputs) {
@@ -387,9 +407,13 @@ async function restoreProject(payload) {
   $("#statue-hollow").value = settings.hollow ? "hollow" : "solid";
   $("#statue-connected").checked = settings.prefer_connected;
   excludedBlocks = settings.excluded;
-  for (const key of visibility.keys()) visibility.set(key, settings.layers.includes(key));
-  buildLayerControls();
-  await poseControls.restore(result.workspace || settings);
+  if (sceneDoc) await sceneEditor.restore(sceneDoc);
+  else {
+    for (const key of visibility.keys()) visibility.set(key, settings.layers.includes(key));
+    buildLayerControls();
+    await poseControls.restore(result.workspace || settings);
+    sceneEditor.remember();
+  }
   window.dispatchEvent(new CustomEvent("project-palette-settings", { detail: settings }));
   await displayStatue(result);
   editor.reset(result);
@@ -457,7 +481,7 @@ function setView(view) {
   const bounds=new THREE.Box3();
   scene.updateMatrixWorld(true);
   if(previewMode==="statue" && statueMesh) bounds.setFromObject(statueMesh);
-  else if(player) {bounds.setFromObject(player);if(heldGroup)bounds.union(new THREE.Box3().setFromObject(heldGroup));}
+  else if(player) for (const mesh of sceneEditor?.meshes() || player.children.filter((m) => m.visible)) bounds.union(new THREE.Box3().setFromObject(mesh));
   let distance=65;
   if(bounds.isEmpty())controls.target.set(0,16,0);
   else {
@@ -530,6 +554,22 @@ function disposePlayer() {
   }
 }
 
+/** 移除人物或恢复工程时释放该人物独占的网格、材质和纹理。 */
+function disposeActor(bundle) {
+  if (!bundle) return;
+  const mats=new Set(bundle.materials), maps=new Set([bundle.texture]);
+  for(const group of [bundle.player,bundle.heldGroup]) if(group) {
+    scene.remove(group);
+    for(const mesh of group.children) {
+      mesh.geometry.dispose();
+      for(const material of [mesh.userData.standard,mesh.userData.flat].flat()) mats.add(material);
+      if(mesh.isInstancedMesh)mesh.dispose();
+    }
+  }
+  for(const material of mats){if(material.map)maps.add(material.map);material.dispose();}
+  for(const map of maps)if(map)map.dispose();
+}
+
 /** 导入成功后原子替换模型；保留最近一次请求，避免快速切换时显示旧结果。 */
 async function importSkin(file, preserveLayers = false) {
   const id = ++requestId;
@@ -579,6 +619,7 @@ async function importSkin(file, preserveLayers = false) {
     updateAtlas();
     showMode("skin");
     showNotice(parsed.notes.join(" "));
+    if (!sceneEditor?.busy) sceneEditor?.remember();
     if (!preserveLayers) {
       $("#auto-rotate").checked = false;
       controls.autoRotate = false;
@@ -621,7 +662,7 @@ function buildLayerControls() {
       input.dataset.key = `${part.id}:${layer}`;
       input.dataset.layer = layer;
       input.checked = visibility.get(input.dataset.key) && data.pixels > 0;
-      input.disabled = data.pixels === 0;
+      input.disabled = data.pixels === 0 || (sceneEditor?.headOnly && part.id !== "head");
       input.setAttribute("aria-label", `${part.label}${layer === "base" ? "基础层" : "第二层"}`);
       label.title = data.pixels ? `${data.pixels} 个有效像素，其中 ${data.translucent_pixels} 个半透明像素` : "此部位没有第二层像素";
       input.addEventListener("change", () => {
@@ -646,10 +687,11 @@ function updateVisibility() {
     }
   }
   for (const mesh of player.children) {
-    mesh.visible = visibility.get(mesh.userData.key) && mesh.userData.pixels > 0;
+    mesh.visible = visibility.get(mesh.userData.key) && mesh.userData.pixels > 0 && (!sceneEditor?.headOnly || mesh.userData.part === "head");
     mesh.material = $("#flat-color").checked ? mesh.userData.flat : mesh.userData.standard;
   }
   if (heldGroup) heldGroup.children.forEach((mesh) => { mesh.material = $("#flat-color").checked ? mesh.userData.flat : mesh.userData.standard; });
+  sceneEditor?.visible();
   for (const layer of ["base", "overlay"]) {
     const inputs = [...document.querySelectorAll(`[data-layer="${layer}"]:not(:disabled)`)];
     const checked = inputs.filter((input) => input.checked).length;
@@ -658,9 +700,9 @@ function updateVisibility() {
     master.indeterminate = checked > 0 && checked < inputs.length;
     master.disabled = inputs.length === 0;
   }
-  const outer = skin.parts.reduce((total, part) => total + part.layers.overlay.pixels, 0);
+  const outer = skin.parts.filter((p)=>!sceneEditor?.headOnly || p.id==="head").reduce((total, part) => total + part.layers.overlay.pixels, 0);
   const shown = player.children.filter((mesh) => mesh.visible).length;
-  if (previewMode === "skin") status.textContent = `已解析 6 个部位 · 第二层 ${outer} 像素 · 当前显示 ${shown} 个图层`;
+  if (previewMode === "skin") status.textContent = `已解析 ${sceneEditor?.headOnly ? 1 : 6} 个部位 · 第二层 ${outer} 像素 · 当前显示 ${shown} 个图层`;
 }
 
 /** 查看与下载完全同源的纹理图集。 */
@@ -803,6 +845,19 @@ function bindUI() {
   $("#statue-plain").addEventListener("change", updateVisibility);
   $("#preview-connected").addEventListener("change", () => void refreshConnectedPreview());
   $("#statue-alpha").addEventListener("change", () => void poseControls.apply());
+  $("#paste-anchor").addEventListener("change",updatePlacementGuide);
+  // 点击固定吸附点选择粘贴站位；拖动继续交给相机。
+  const anchorRay=new THREE.Raycaster();let anchorDown=null;
+  renderer.domElement.addEventListener("pointerdown",(e)=>{anchorDown=e.button===0?{x:e.clientX,y:e.clientY}:null;});
+  renderer.domElement.addEventListener("pointercancel",()=>{anchorDown=null;});
+  renderer.domElement.addEventListener("pointerup",(e)=>{
+    const down=anchorDown;anchorDown=null;
+    if(!down || !placementGuide?.visible || previewMode!=="statue" || Math.hypot(e.clientX-down.x,e.clientY-down.y)>5)return;
+    const r=renderer.domElement.getBoundingClientRect();
+    anchorRay.setFromCamera(new THREE.Vector2((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1),camera);
+    const hit=anchorRay.intersectObject(placementGuide,true).find((h)=>h.object.userData.anchorPoint);
+    if(hit){e.statuePlacementHandled=true;$("#paste-anchor").value=hit.object.userData.anchorPoint;updatePlacementGuide();}
+  });
   $("#show-anchor").addEventListener("change", () => { if (placementGuide) placementGuide.visible = previewMode === "statue" && $("#show-anchor").checked; });
   $("#export-statue").addEventListener("click", () => void exportStatue(false));
   $("#export-statue-bundle").addEventListener("click", () => void exportStatue(true));
@@ -842,9 +897,9 @@ try {
   bindUI();
   editor = initEditor({
     canvas: renderer.domElement, camera, scene,
-    state: () => ({ mesh: statueMesh, data: statueData, mode: previewMode, busy: generating || loading || poseControls?.busy }),
+    state: () => ({ mesh: statueMesh, data: statueData, mode: previewMode, busy: generating || loading || poseControls?.busy || sceneEditor?.busy }),
     display: displayStatue, restore: restoreProject, download, notify: showNotice, sync: updateGenerateButton,
-    workspace: () => poseControls.settings,
+    workspace: () => ({...poseControls.settings, paste_anchor:$("#paste-anchor").value, scene: sceneEditor.document()}),
   });
   poseControls = initPoseControls({
     model: () => skin?.model, display: displayPose,
@@ -855,10 +910,42 @@ try {
   heldEditor = initHeldEditor({
     scene,camera,canvas:renderer.domElement,mode:()=>previewMode,
     item:(hand)=>poseControls.getHeld(hand),change:(hand,values)=>poseControls.transformHeld(hand,values),
+    placement:()=>poseControls.settings.placement,move:(placement)=>poseControls.setPlacement({...poseControls.settings,placement}),
     joint:(part)=>poseControls.getJoint(part),rotateJoint:(part,angles)=>poseControls.rotateJoint(part,angles),
     notify:showNotice,showSkin:()=>{showMode("skin");controls.autoRotate=false;$("#auto-rotate").checked=false;},
     dragging:(value)=>{controls.enabled=!value;},
     pickables:()=>[...(player?.children || []),...(heldGroup?.children || [])],
+  });
+  sceneEditor = initSceneEditor({
+    canvas: renderer.domElement, camera,
+    read: () => ({file:currentFile, skin, layers:[...visibility].filter(([,v])=>v).map(([k])=>k), options:poseControls.settings, render:{player,heldGroup,materials,texture}}),
+    detach: () => { player=null;heldGroup=null;skin=null;currentFile=null;materials=[];texture=null; },
+    async activate(actor) {
+      if (actor.render) {
+        ({player,heldGroup,materials,texture}=actor.render); skin=actor.skin;currentFile=actor.file;
+        modelInputs.forEach((input)=>{input.checked=input.value===skin.model;input.disabled=skin.legacy&&input.value==="alex";});
+        $("#file-info").textContent=`${currentFile.name} · ${skin.source_size.join(" × ")}`;
+        $("#model-hint").textContent=skin.legacy ? "64×32 旧皮肤使用 Steve。" : "请选择与皮肤匹配的手臂模型。";
+      } else {
+        modelInputs.forEach((input)=>{input.checked=input.value===(actor.model || actor.skin?.model || "steve");input.disabled=false;});
+        await poseControls.restore(actor.options);
+        const file=actor.file || new File([await (await fetch(actor.image)).blob()],actor.name+".png",{type:"image/png"});
+        if (!await importSkin(file)) throw new Error(`人物“${actor.name}”的皮肤无法打开。`);
+      }
+      if (actor.layers) for(const key of visibility.keys())visibility.set(key,actor.layers.includes(key));
+      buildLayerControls(); await poseControls.restore(actor.options);updateAtlas();showMode("skin");
+    },
+    dispose: disposeActor,
+    flush: () => poseControls.apply(), clearGizmo: () => heldEditor.clearSelection(),
+    busy: () => generating || loading || editor?.busy,
+    sync:updateGenerateButton, notify:showNotice, changed:markStatueChanged, visibility:updateVisibility,
+    mode:()=>previewMode,flat:()=>$("#flat-color").checked,dragging:()=>!controls.enabled,
+    transform:(values)=>poseControls.setPlacement(values),
+    async modeChanged(){
+      buildLayerControls();
+      for(const row of document.querySelectorAll(".joint-angle-row")) row.inert = sceneEditor.headOnly && row.querySelector("[data-pose-part]").dataset.posePart !== "head";
+      await poseControls.apply();updateVisibility();setView("reset");
+    },
   });
   initParameterHelp();
   void loadDemo();

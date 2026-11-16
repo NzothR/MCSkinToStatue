@@ -205,6 +205,13 @@ def scene_objects(parsed, options):
             obj["edit_frame"][1, 3] -= lowest
         if "joint_frame" in obj:
             obj["joint_frame"][1, 3] -= lowest
+    # 每个人物独立落地后，再施加场景缩放和位置；关节与持物保持同一父变换。
+    factor = options.get("scale_factor", 1)
+    root = translation(*options.get("placement", [0, 0, 0])) @ scaling(factor, factor, factor)
+    for obj in objects:
+        for key in ("matrix", "joint_frame", "edit_frame"):
+            if key in obj:
+                obj[key] = root @ obj[key]
     LOGGER.debug(
         "Pose scene: rotations=%s held=%s floor_offset=%s",
         pose,
@@ -257,4 +264,4 @@ def pose_preview(parsed, options):
                 }
             )
         result.append(row)
-    return {"objects": result}
+    return {"objects": result, "placement": options.get("placement", [0, 0, 0])}

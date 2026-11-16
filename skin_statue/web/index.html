@@ -29,6 +29,20 @@
         <form id="username-form" class="username-form"><label for="java-username">Java 正版用户名</label><div class="resource-actions"><input id="java-username" autocomplete="off" maxlength="16" pattern="[A-Za-z0-9_]{1,16}" placeholder="输入用户名" required><button id="import-username">查询皮肤</button></div></form>
         <p class="hint">通过 Mojang 官方服务查询皮肤与当前披风，自动识别 Steve / Alex。披风可在下方列表切换。</p>
       </section>
+      <section class="scene-settings">
+        <div class="section-heading"><h2>生成模式与人物</h2></div>
+        <label class="setting-row">生成模式<select id="generation-mode"><option value="full">完整人物 · 支持多人</option><option value="head">仅头颅 · 单人</option></select></label>
+        <label class="setting-row">当前人物<select id="scene-actor" aria-label="当前编辑人物"></select></label>
+        <label class="setting-row">人物名称<input id="scene-name" maxlength="80" value="人物"></label>
+        <label class="import-index">添加多个皮肤<input id="scene-files" type="file" accept="image/png,.png" multiple hidden></label>
+        <div class="cape-actions"><button id="scene-duplicate">复制当前人物</button><button id="scene-remove">移除当前人物</button><button id="scene-move">平移当前人物</button></div>
+        <p class="hint">每个人物独立保存姿势、图层、披风和左右手物品。上方导入皮肤替换当前人物；点击其他人物可切换编辑。</p>
+        <label class="setting-row" title="单位为皮肤像素，生成时乘生成倍率；X 左右、Y 上下、Z 前后。">位置 X<input id="scene-position-0" data-scene-transform type="number" min="-2048" max="2048" step="any" value="0" required></label>
+        <label class="setting-row">位置 Y<input id="scene-position-1" data-scene-transform type="number" min="-2048" max="2048" step="any" value="0" required></label>
+        <label class="setting-row">位置 Z<input id="scene-position-2" data-scene-transform type="number" min="-2048" max="2048" step="any" value="0" required></label>
+        <label class="setting-row" title="只缩放当前人物，生成倍率控制整个场景。">人物大小<input id="scene-size" data-scene-transform type="number" min="0.25" max="4" step="any" value="1" required></label>
+        <p id="scene-status" class="hint" role="status">完整模式支持多人；头颅模式只显示并生成当前人物的头部及外层。</p>
+      </section>
       <section class="project-section">
         <div class="section-heading"><h2>草稿与工程</h2></div>
         <button id="save-project" class="primary-button" disabled>↓ 保存工程 .skinproj</button>
@@ -119,7 +133,9 @@
         <select id="statue-export-profile"><option value="worldedit_gtnh">GTNH WorldEdit · 扩展 ID</option><option value="mcedit">传统 MCEdit / WorldEdit · ID≤4095</option><option value="schematica_gtnh">GTNH Schematica · SchematicPlus</option></select>
         <button id="export-statue" class="primary-button" disabled>↓ 导出 .schematic</button>
         <button id="export-statue-bundle" class="bundle-button" disabled>↓ 结构与材料对照包 ZIP</button>
-        <p class="hint" id="statue-export-hint">先生成雕像。默认 I 点为正面右下角，正面朝南（+Z）。</p>
+        <label class="setting-row" title="点击预览底部的圆点也可选择；玩家始终面向整体中心。偶数边长的中点对齐较小坐标一侧的中心格。">粘贴站位<select id="paste-anchor"><option value="auto">默认：长边中点</option><option value="northwest">西北角</option><option value="north">北边中点</option><option value="northeast">东北角</option><option value="east">东边中点</option><option value="southeast">东南角</option><option value="south">南边中点</option><option value="southwest">西南角</option><option value="west">西边中点</option></select></label>
+        <p class="hint">在雕像预览底部点击八个圆点切换小人站位。WorldEdit 普通粘贴保持结构坐标方向。</p>
+        <p class="hint" id="statue-export-hint">先生成雕像。以整体包围盒底面中心为基准，默认站在长边中点。</p>
         <p class="hint">导出当前已生成的结果；修改参数后需重新生成。Schematica 扩展文件需要开启 useSchematicplusFormat。</p>
       </section>
       <section class="export-section">
@@ -173,7 +189,7 @@
         <label><input type="checkbox" id="grid-visible" checked> 地面网格</label>
         <label><input type="checkbox" id="auto-rotate"> 自动旋转</label>
         <label><input type="checkbox" id="flat-color"> 原始颜色</label>
-        <label><input type="checkbox" id="show-anchor" checked> I 点与包围盒</label>
+        <label><input type="checkbox" id="show-anchor" checked> 站位与包围盒</label>
         <label><input type="checkbox" id="preview-connected" checked> 连接纹理预览</label>
         <div class="background-options" aria-label="预览背景"><button data-bg="dark" class="swatch dark active" aria-label="深色背景"></button><button data-bg="light" class="swatch light" aria-label="浅色背景"></button><button data-bg="checker" class="swatch checker" aria-label="棋盘背景"></button></div>
       </div>

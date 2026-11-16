@@ -221,3 +221,6 @@ h1 { font-size: 22px; font-weight: 450; letter-spacing: 2px; margin: 8px 0 0; }
 .item-result.active { border-color: var(--accent); background: #28443a; }
 .held-hand-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .held-hand-heading label { display: flex; align-items: center; gap: 6px; margin: 0; }
+
+.scene-settings > .import-index { display: block; margin: 12px 0; text-align: center; }
+.scene-settings .setting-row > select, .scene-settings .setting-row > input { min-width: 0; width: 58%; }

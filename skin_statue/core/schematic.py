@@ -4,6 +4,7 @@ import csv
 import gzip
 import json
 import logging
+import math
 from io import BytesIO, StringIO
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -21,29 +22,37 @@ PROFILES = {
 }
 
 
-def placement(dimensions: tuple | list) -> dict:
-    """以正面右下角方块 I 为锚点，X 东、Y 上、Z 南，雕像正面朝南。"""
-    w, h, length = (int(value) for value in dimensions)
-    corners = {
-        "A": [w - 1, h - 1, 0],
-        "B": [0, h - 1, 0],
-        "C": [0, h - 1, length - 1],
-        "D": [w - 1, h - 1, length - 1],
-        "E": [w - 1, 0, 0],
-        "F": [0, 0, 0],
-        "G": [0, 0, length - 1],
-        "I": [w - 1, 0, length - 1],
+def placement(dimensions: tuple | list, selection: str = "auto") -> dict:
+    """围绕整体底面几何中心给出八个离散站位；Schematic 原点只能使用整数格。"""
+    w, _, length = (int(value) for value in dimensions)
+    x, z = (w - 1) // 2, (length - 1) // 2
+    points = {
+        "northwest": {"label": "西北角", "position": [0, 0, 0]},
+        "north": {"label": "北边中点", "position": [x, 0, 0]},
+        "northeast": {"label": "东北角", "position": [w - 1, 0, 0]},
+        "east": {"label": "东边中点", "position": [w - 1, 0, z]},
+        "southeast": {"label": "东南角", "position": [w - 1, 0, length - 1]},
+        "south": {"label": "南边中点", "position": [x, 0, length - 1]},
+        "southwest": {"label": "西南角", "position": [0, 0, length - 1]},
+        "west": {"label": "西边中点", "position": [0, 0, z]},
     }
+    default = "south" if w >= length else "east"
+    identity = default if selection == "auto" else selection
+    point = points[identity]
+    local = point["position"]
+    center = [w / 2, 0, length / 2]
+    direction = [center[0] - local[0] - 0.5, center[2] - local[2] - 0.5]
     return {
-        "anchor": "I",
-        "anchor_local": corners["I"],
-        "offset": [1 - w, 0, 1 - length],
-        "front": "south (+Z)",
-        "corners": corners,
-        "top_face": "ABCD",
-        "front_face": "CDGI",
-        "back_face": "ABEF",
-        "note": "I 为包围盒正面右下角的方块坐标；普通 //paste 不按玩家视线自动旋转。",
+        "selection": selection,
+        "anchor": identity,
+        "label": point["label"],
+        "default_anchor": default,
+        "anchor_local": local,
+        "offset": [-v for v in local],
+        "center": center,
+        "points": points,
+        "facing_yaw": math.degrees(math.atan2(-direction[0], direction[1])),
+        "note": "以整体包围盒底面中心为几何基准，玩家站位只选底部四角或四边中点；偶数边长的中点对齐较小坐标一侧的中心格。普通 //paste 不随视线旋转。",
     }
 
 
@@ -117,7 +126,7 @@ def schematic_bytes(statue: GeneratedStatue, profile: str) -> bytes:
             f"该导出模式最多支持 ID {limit}，本雕像使用 ID {maximum}。请选择 GTNH WorldEdit 扩展格式，或禁用超限材料后重新生成。"
         )
     w, h, length = indices.shape
-    anchor = placement(indices.shape)
+    anchor = placement(indices.shape, statue.preview["placement"].get("selection", "auto"))
     mapping = {
         material["registry_name"]: material["numeric_id"]
         for material in statue.preview["materials"]
@@ -140,8 +149,9 @@ def schematic_bytes(statue: GeneratedStatue, profile: str) -> bytes:
         ),
         "SkinStatue": nbt.Compound(
             {
-                "Anchor": nbt.String("I"),
-                "Front": nbt.String("south"),
+                "Anchor": nbt.String(anchor["anchor"]),
+                "BottomCenter": nbt.DoubleArray(anchor["center"]),
+                "FacingYaw": nbt.Float(anchor["facing_yaw"]),
                 "Profile": nbt.String(profile),
                 "PaletteId": nbt.String(statue.preview["palette_id"]),
             }
@@ -195,7 +205,9 @@ def export_bundle(statue: GeneratedStatue, profile: str) -> bytes:
         "options": preview["options"],
         "matching": preview["matching"],
         "edits": preview.get("edits", []),
-        "placement": placement(preview["dimensions"]),
+        "placement": preview["placement"],
+        "scene": preview.get("scene"),
+        "actor_materials": preview.get("actor_materials"),
         "materials": materials,
         "validation": "NBT dimensions, block IDs, metadata, registry mappings and anchor read back successfully",
     }
@@ -216,17 +228,17 @@ def export_bundle(statue: GeneratedStatue, profile: str) -> bytes:
         )
     usage = (
         "在 GTNH Schematica 中启用 useSchematicplusFormat=true，重启后通过 GUI 加载与定位。\n"
-        "此模式的 AddBlocks 编码供 SchematicPlus 使用；WorldEdit 的 I 点偏移不作用于 Schematica GUI。\n"
+        "此模式的 AddBlocks 编码供 SchematicPlus 使用；WorldEdit 的站位偏移不作用于 Schematica GUI。\n"
         if profile == "schematica_gtnh"
         else "WorldEdit：将 statue.schematic 放进实例 config/worldedit/schematics 目录；\n"
         "//schem load mcedit statue\n//paste -a\n"
-        "站在计划的 I 点，朝西北看向雕像；普通粘贴不会随视线自动旋转。\n"
+        "站在计划的所选位置，朝整体底面中心看向雕像；普通粘贴不会随视线自动旋转。\n"
         "//paste -a 只放非空气块；若需要完整替换包围盒中的空气，使用 //paste。\n"
     )
     instructions = (
         "Skin Statue 导出包\n"
         f"模式：{PROFILES[profile]}\n尺寸：{preview['dimensions']}\n"
-        "默认锚点为从正面看包围盒的右下角方块 I，正面朝南（+Z）。\n"
+        f"底面几何中心：{preview['placement']['center']}；所选站位：{preview['placement']['label']}，局部格坐标 {preview['placement']['anchor_local']}。\n"
         + usage
         + "report.json 包含材料的六面图标、代表颜色与 ID，用于对照游戏实际方块。\n"
     )

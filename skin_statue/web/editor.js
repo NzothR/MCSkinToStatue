@@ -48,7 +48,7 @@ export function initEditor(host) {
   function showSelection() {
     if (!selected) return;
     const e = selected.entry;
-    $("#selection-info").textContent = `${e.display_name || "本地化名称需重新导出索引（辅助模组 0.1.2）"}\n${e.registry_name} · ID ${e.numeric_id}:${e.metadata}\n${e.building_label || "其他材料"}\n固定分组 ${selected.count.toLocaleString()} 块 · 原始材料 ${selected.origin}\n局部坐标 ${selected.position.join(", ")}`;
+    $("#selection-info").textContent = `${e.display_name || "本地化名称需重新导出索引（辅助模组 0.1.2）"}\n${e.registry_name} · ID ${e.numeric_id}:${e.metadata}\n${e.building_label || "其他材料"}\n${selected.actor_name ? "人物：" + selected.actor_name + "\n" : ""}固定分组 ${selected.count.toLocaleString()} 块 · 原始材料 ${selected.origin}\n局部坐标 ${selected.position.join(", ")}`;
     $("#edit-tools").hidden = false;
     const data = host.state().data;
     const min = new THREE.Vector3(...selected.position.map((p, i) => (p + data.bounds[0][i]) / data.scale));
@@ -203,7 +203,7 @@ export function initEditor(host) {
     const start = pointer;
     pointer = null;
     const state = host.state();
-    if (!start || event.pointerId !== start.id || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 5 || state.mode !== "statue" || busy || state.busy) return;
+    if (event.statuePlacementHandled || !start || event.pointerId !== start.id || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 5 || state.mode !== "statue" || busy || state.busy) return;
     const rect = host.canvas.getBoundingClientRect();
     ray.setFromCamera(new THREE.Vector2((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1), host.camera);
     const hit = ray.intersectObject(state.mesh, false)[0];
