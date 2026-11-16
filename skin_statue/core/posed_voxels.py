@@ -1,5 +1,6 @@
 """在世界体素中心逆变换采样旋转部件，避免正向旋转散点造成孔洞。"""
 
+import logging
 from itertools import product
 
 import numpy as np
@@ -7,6 +8,8 @@ from PIL import Image
 
 from skin_statue.core.palette import FACES
 from skin_statue.core.pose import scene_objects
+
+LOGGER = logging.getLogger(__name__)
 
 
 def sample_face(points, face, size, patch):
@@ -26,7 +29,7 @@ def sample_face(points, face, size, patch):
 
 
 def posed_voxels(parsed, image, options):
-    """按部位分片逆采样实体和透明外层，输出与站姿生成相同的颜色缓冲区。"""
+    """逆采样实体与按模型比例膨胀的逐面外壳；透明面不会否决相邻面的凸起。"""
     scale = options["scale"]
     objects = scene_objects(parsed, options)
     # 薄片也需要至少一格的几何厚度；按逆变换后的格宽覆盖斜放的物品表面。
@@ -40,7 +43,12 @@ def posed_voxels(parsed, image, options):
     boxes = []
     corner = np.array(list(product((-0.5, 0.5), repeat=3)))
     for obj in objects:
-        size = obj["size"] + (2 * options["overlay_offset"] / scale if "part" in obj else 0)
+        inflation = (
+            max(options["overlay_offset"] / scale, obj["part"]["layers"]["overlay"]["inflate"])
+            if "part" in obj
+            else 0
+        )
+        size = obj["size"] + 2 * inflation
         world = (corner * size + obj.get("center", 0)) @ obj["matrix"][:3, :3].T + obj["matrix"][
             :3, 3
         ]
@@ -69,9 +77,12 @@ def posed_voxels(parsed, image, options):
                 continue
             if not item and f"{obj['id']}:{layer}" not in options["layers"]:
                 continue
-            size = obj["size"] + (
-                2 * options["overlay_offset"] / scale if layer == "overlay" else 0
+            inflation = (
+                max(options["overlay_offset"] / scale, obj["part"]["layers"]["overlay"]["inflate"])
+                if layer == "overlay"
+                else 0
             )
+            size = obj["size"] + 2 * inflation
             inverse = np.linalg.inv(obj["matrix"][:3, :3])
             center = obj.get("center", np.zeros(3))
             if "cube_faces" in obj:
@@ -89,6 +100,7 @@ def posed_voxels(parsed, image, options):
                             Image.Resampling.BOX,
                         )
                     patches[face] = np.asarray(patch)
+            written = 0
             for sy in range(start[1], end[1], 16):
                 world = np.stack(
                     np.meshgrid(
@@ -100,7 +112,7 @@ def posed_voxels(parsed, image, options):
                     axis=-1,
                 ).reshape(-1, 3)
                 points = ((world + 0.5) / scale - obj["matrix"][:3, 3]) @ inverse.T - center
-                active = np.all(np.abs(points) < size / 2, axis=1)
+                active = np.all((points >= -size / 2) & (points < size / 2), axis=1)
                 if not active.any():
                     continue
                 world, points = world[active], points[active]
@@ -125,23 +137,35 @@ def posed_voxels(parsed, image, options):
                     keep = colors[:, 0, 3] >= options["alpha_threshold"]
                 else:
                     distance = size / 2 - np.abs(points)
-                    closest_axis = distance.argmin(axis=1)
-                    nearest_face = 2 * closest_axis + (
-                        points[np.arange(len(points)), closest_axis] < 0
-                    )
+                    if layer == "overlay":
+                        # 六个带 Alpha 的面各自向内拉伸至基础盒；棱角取并集，保留耳尖等凸起。
+                        covering = np.zeros((len(points), 6), dtype=bool)
+                        face_distance = np.full((len(points), 6), np.inf)
+                        for f, face in enumerate(FACES):
+                            axis, sign = divmod(f, 2)
+                            sign = 1 if sign == 0 else -1
+                            pixels = sample_face(points, face, size, patches[face])
+                            covering[:, f] = (points[:, axis] * sign >= obj["size"][axis] / 2) & (
+                                pixels[:, 3] >= options["alpha_threshold"]
+                            )
+                            face_distance[:, f] = np.where(
+                                covering[:, f], distance[:, axis], np.inf
+                            )
+                        keep = covering.any(axis=1)
+                        nearest_face = face_distance.argmin(axis=1)
+                    else:
+                        closest_axis = distance.argmin(axis=1)
+                        nearest_face = 2 * closest_axis + (
+                            points[np.arange(len(points)), closest_axis] < 0
+                        )
+                        keep = np.ones(len(points), dtype=bool)
                     nearest = np.empty((len(points), 4), dtype=np.uint8)
                     for f, face in enumerate(FACES):
                         mask = nearest_face == f
                         nearest[mask] = sample_face(points[mask], face, size, patches[face])
-                    keep = (
-                        np.ones(len(points), dtype=bool)
-                        if layer == "base"
-                        else (
-                            (distance.min(axis=1) < 1 / scale)
-                            & (nearest[:, 3] >= options["alpha_threshold"])
-                        )
-                    )
                     colors = np.empty((len(points), 6, 4), dtype=np.uint8)
+                    if layer == "overlay":
+                        hit_faces = np.empty((len(points), 6), dtype=np.int8)
                     for direction, normal in enumerate(directions):
                         ray = inverse @ normal
                         times = np.full(points.shape, np.inf)
@@ -151,6 +175,8 @@ def posed_voxels(parsed, image, options):
                         ) / ray[moving]
                         axis = times.argmin(axis=1)
                         faces = 2 * axis + (ray[axis] < 0)
+                        if layer == "overlay":
+                            hit_faces[:, direction] = faces
                         hits = points + times.min(axis=1)[:, None] * ray
                         for f, face in enumerate(FACES):
                             mask = faces == f
@@ -158,12 +184,23 @@ def posed_voxels(parsed, image, options):
                                 hits[mask], face, size, patches[face]
                             )
                     invisible = colors[..., 3] < options["alpha_threshold"]
+                    if layer == "overlay":
+                        # 某个方向穿过透明或未覆盖当前体素的面时，使用实际构成外壳的面色。
+                        invisible |= ~covering[np.arange(len(points))[:, None], hit_faces]
                     colors[invisible] = np.broadcast_to(nearest[:, None, :], colors.shape)[
                         invisible
                     ]
                 index = tuple((world[keep] - low).T)
+                written += len(index[0])
                 occupied[index] = True
                 if layer == "base":
                     base[index] = True
                 targets[index] = colors[keep]
+            LOGGER.debug(
+                "Voxel layer: part=%s layer=%s inflation=%s blocks=%s",
+                obj["id"],
+                layer,
+                inflation,
+                written,
+            )
     return low, occupied, base, targets

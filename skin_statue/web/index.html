@@ -80,7 +80,8 @@
         <label class="setting-row">颜色细节<select id="statue-detail"><option value="1">逐像素 · 完整细节</option><option value="2">2 × 2 像素平均</option><option value="4">4 × 4 像素平均</option></select></label>
         <label class="setting-row">内部结构<select id="statue-hollow"><option value="hollow">空心</option><option value="solid">实心</option></select></label>
         <label class="setting-row">壳厚（格）<input id="statue-thickness" type="number" min="1" max="4" value="1"></label>
-        <label class="setting-row">外层偏移（格）<input id="statue-offset" type="number" min="1" max="3" value="1"></label>
+        <label class="setting-row">外层最小外凸（格）<input id="statue-offset" type="number" min="1" max="3" value="1"></label>
+        <p class="hint">外层随模型比例放大：头部每侧 0.5 皮肤像素，其余部位 0.25；此处设置最小外凸量。保留耳朵等轮廓请选择完整细节。</p>
         <label class="setting-row">外层 Alpha 阈值<input id="statue-alpha" type="number" min="1" max="255" value="128"></label>
         <label class="setting-row">匹配策略<select id="statue-smoothness"><option value="0">颜色优先</option><option value="0.2" selected>平衡</option><option value="0.7">平滑优先</option></select></label>
         <label class="setting-row"><span>优先连接纹理</span><input id="statue-connected" type="checkbox"></label>

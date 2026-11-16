@@ -41,14 +41,26 @@ def exposure(occupied: np.ndarray, axis: int, sign: int) -> np.ndarray:
 
 
 def paint_faces(targets, occupied, base, owners, box, part, layer, image, options, owner):
-    """将六面 UV 投影到体素表面；外层不覆盖主体，外层之间按部位顺序解决冲突。"""
+    """外层逐面沿法线填到主体边界，各面的 Alpha 独立决定棱角处的占据。"""
     lo, hi = box
+    base_lo, base_hi = lo, hi
+    if layer == "overlay":
+        inflation = max(
+            options["overlay_offset"], part["layers"][layer]["inflate"] * options["scale"]
+        )
+        # 采样格中心，半格边界使用左闭右开，与旋转路径一致。
+        lo = np.ceil(lo - inflation - 0.5).astype(int)
+        hi = np.ceil(hi + inflation - 0.5).astype(int)
     for direction, face in enumerate(FACES):
         axis, sign = DIRECTIONS[direction]
         plane = [slice(lo[i], hi[i]) for i in range(3)]
-        plane[axis] = hi[axis] - 1 if sign == 1 else lo[axis]
+        plane[axis] = (
+            (slice(base_hi[axis], hi[axis]) if sign == 1 else slice(lo[axis], base_lo[axis]))
+            if layer == "overlay"
+            else (hi[axis] - 1 if sign == 1 else lo[axis])
+        )
         plane = tuple(plane)
-        shape = occupied[plane].shape
+        shape = tuple(hi[i] - lo[i] for i in range(3) if i != axis)
         # 侧面图集横向对应 Z，顶底面横向对应 X，正背面横向对应 X。
         width, height = (shape[1], shape[0]) if axis == 0 else shape
         patch = image.crop(part["layers"][layer]["faces"][face])
@@ -66,6 +78,8 @@ def paint_faces(targets, occupied, base, owners, box, part, layer, image, option
         # 底面的几何 Z 方向与 UV 的翻转相互抵消，和顶面一样按 PNG 行顺序取色。
         if axis != 0:
             pixels = pixels.transpose(1, 0, 2)
+        if layer == "overlay":
+            pixels = np.broadcast_to(np.expand_dims(pixels, axis), (*occupied[plane].shape, 4))
         if layer == "base":
             targets[plane + (direction,)] = pixels
         else:
@@ -259,8 +273,11 @@ def greedy_mesh(blocks, lookup, origin, overrides=None):
 def generate_statue(parsed: dict, palette: Palette, options: dict) -> GeneratedStatue:
     """生成实际方块体素并返回批处理预览网格、材料统计与生成参数。"""
     scale = options["scale"]
-    offset = options["overlay_offset"]
     parts = parsed["parts"]
+    offset = max(
+        options["overlay_offset"],
+        ceil(max(p["layers"]["overlay"]["inflate"] for p in parts) * scale),
+    )
     with Image.open(
         BytesIO(base64.b64decode(parsed["images"]["normalized"].split(",", 1)[1]))
     ) as source:
@@ -314,8 +331,6 @@ def generate_statue(parsed: dict, palette: Palette, options: dict) -> GeneratedS
             for owner, (part, box) in enumerate(zip(parts, boxes, strict=True)):
                 if f"{part['id']}:{layer}" not in options["layers"]:
                     continue
-                if layer == "overlay":
-                    box = (box[0] - offset, box[1] + offset)
                 paint_faces(
                     targets, occupied, base, owners, box, part, layer, image, options, owner
                 )
