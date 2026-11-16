@@ -155,8 +155,10 @@ async function exportStatue(bundle) {
   try {
     const response = await fetch(`/api/statue/${snapshot.statue_id}/export?profile=${profile}&bundle=${bundle}&anchor=${$("#paste-anchor").value}`);
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail);
+      // 服务端 500 可能返回纯文本，按响应类型读取，保留原始错误与 HTTP 状态。
+      const detail = response.headers.get("content-type")?.includes("application/json")
+        ? (await response.json()).detail : await response.text();
+      throw new Error(`导出失败（HTTP ${response.status}）：${detail}`);
     }
     download(URL.createObjectURL(await response.blob()), filename, true);
     $("#statue-export-hint").textContent = profile === "schematica_gtnh" ? `已导出 ${filename}。在 Schematica 中启用 SchematicPlus，并用其 GUI 定位。` : `已导出 ${filename}。站在所选位置：//schem load mcedit statue-${snapshot.statue_id.slice(0, 8)}-${profile}，然后 //paste -a。朝向整体中心；普通粘贴保持坐标方向。`;

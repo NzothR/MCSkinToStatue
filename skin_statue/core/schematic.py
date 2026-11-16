@@ -150,7 +150,8 @@ def schematic_bytes(statue: GeneratedStatue, profile: str) -> bytes:
         "SkinStatue": nbt.Compound(
             {
                 "Anchor": nbt.String(anchor["anchor"]),
-                "BottomCenter": nbt.DoubleArray(anchor["center"]),
+                # NBT 只定义字节、整数和长整数数组；浮点坐标必须使用 Double 列表。
+                "BottomCenter": nbt.List[nbt.Double](anchor["center"]),
                 "FacingYaw": nbt.Float(anchor["facing_yaw"]),
                 "Profile": nbt.String(profile),
                 "PaletteId": nbt.String(statue.preview["palette_id"]),
