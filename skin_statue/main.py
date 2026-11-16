@@ -369,9 +369,7 @@ def restore_project(data: bytes) -> dict:
 async def load_project(file: Annotated[UploadFile, File()]) -> dict:
     """打开工程而不通过结构格式丢失编辑上下文。"""
     try:
-        data = await file.read(128 * 1024 * 1024 + 1)
-        if len(data) > 128 * 1024 * 1024:
-            raise HTTPException(413, "工程需不超过 128 MB。")
+        data = await file.read()
         return await run_in_threadpool(restore_project, data)
     finally:
         await file.close()

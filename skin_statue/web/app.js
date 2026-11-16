@@ -112,6 +112,7 @@ let controls;
 let scene;
 let camera;
 let grid;
+let gridDirty = true;
 let player = null;
 let skin = null;
 let currentFile = null;
@@ -180,6 +181,7 @@ function updateGenerateButton() {
 
 /** 参数改变后保留上次可看的结果，并明确提示需要重新生成。 */
 function markStatueChanged() {
+  gridDirty = true;
   revision++;
   if (statueData || generating) $("#statue-state").textContent = "参数已改，请重新生成";
 }
@@ -204,18 +206,7 @@ function showMode(mode) {
     $("#format-badge").textContent = `${skin.legacy ? "LEGACY → 64×64" : "64×64 RGBA"} / ${skin.model.toUpperCase()}`;
     updateVisibility();
   }
-  if (grid) {
-    scene.remove(grid);
-    grid.geometry.dispose();
-    grid.material.dispose();
-    const scale = mode === "statue" ? statueData.scale : 1;
-    grid = new THREE.GridHelper(80, mode === "statue" ? 80 * scale : 40, 0x65817b, 0x385257);
-    grid.position.y = mode === "statue" ? statueData.bounds[0][1] / scale - 0.3 : -0.3;
-    grid.material.transparent = true;
-    grid.material.opacity = 0.5;
-    grid.visible = $("#grid-visible").checked;
-    scene.add(grid);
-  }
+  gridDirty = true;
 }
 
 /** 发送当前皮肤和参数，在后台生成后一次性替换雕像预览。 */
@@ -463,6 +454,7 @@ function createViewer() {
     camera.updateProjectionMatrix();
   }).observe(viewport);
   renderer.setAnimationLoop(() => {
+    if (gridDirty) updateGroundGrid();
     controls.update();
     renderer.render(scene, camera);
   });
@@ -473,6 +465,36 @@ function createViewer() {
   });
 }
 
+/** 获取当前可见模型的世界范围；雕像直接复用已裁剪的体素包围盒。 */
+function previewBounds() {
+  if(previewMode === "statue" && statueMesh) return new THREE.Box3(
+    new THREE.Vector3(...statueData.bounds[0]).multiplyScalar(1/statueData.scale),
+    new THREE.Vector3(...statueData.bounds[1]).multiplyScalar(1/statueData.scale));
+  const bounds = new THREE.Box3();
+  scene.updateMatrixWorld(true);
+  if(player) for(const mesh of sceneEditor?.meshes() || player.children.filter((m)=>m.visible)) bounds.union(new THREE.Box3().setFromObject(mesh));
+  return bounds;
+}
+
+/** 地面跟随整体范围并保留周边空地；远距离多人视图使用整数倍格距限制线条数量。 */
+function updateGroundGrid() {
+  gridDirty = false;
+  const bounds = previewBounds(), center = bounds.getCenter(new THREE.Vector3()), size = bounds.getSize(new THREE.Vector3());
+  const span = Math.max(80, Math.max(size.x,size.z)*1.3);
+  const cell = previewMode === "statue" ? 1/statueData.scale : 2;
+  const stride = Math.max(1,Math.ceil(span/cell/2048));
+  const divisions = 2*Math.ceil(span/(cell*stride*2));
+  const width = divisions*cell*stride;
+  if(grid.userData.width !== width || grid.userData.divisions !== divisions) {
+    scene.remove(grid);grid.geometry.dispose();grid.material.dispose();
+    grid = new THREE.GridHelper(width,divisions,0x65817b,0x385257);
+    grid.userData = {width,divisions};
+    grid.material.transparent=true;grid.material.opacity=.5;scene.add(grid);
+  }
+  grid.position.set(center.x,bounds.isEmpty() ? -.3 : bounds.min.y-.3,center.z);
+  grid.visible = $("#grid-visible").checked;
+}
+
 /** 按当前姿势和持物的包围盒适配固定视角；正面 +Z、角色左侧 +X。 */
 function setView(view) {
   const offsets = {
@@ -480,10 +502,7 @@ function setView(view) {
     left: [65, 0, 0], right: [-65, 0, 0],
     top: [0, 65, 0.01], reset: [39, 15, 65],
   };
-  const bounds=new THREE.Box3();
-  scene.updateMatrixWorld(true);
-  if(previewMode==="statue" && statueMesh) bounds.setFromObject(statueMesh);
-  else if(player) for (const mesh of sceneEditor?.meshes() || player.children.filter((m) => m.visible)) bounds.union(new THREE.Box3().setFromObject(mesh));
+  const bounds = previewBounds();
   let distance=65;
   if(bounds.isEmpty())controls.target.set(0,16,0);
   else {
@@ -681,6 +700,7 @@ function buildLayerControls() {
 
 /** 更新显示、主开关的半选状态及像素统计；不修改底层皮肤数据。 */
 function updateVisibility() {
+  gridDirty = true;
   if (!player) return;
   if (statueMesh) {
     for (const material of statueMesh.material) {

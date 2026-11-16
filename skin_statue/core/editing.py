@@ -243,8 +243,6 @@ def open_project(data: bytes) -> tuple[GeneratedStatue, Palette]:
     """读取版本化工程；固定成员直接读入内存，不解压外部路径。"""
     try:
         with ZipFile(BytesIO(data)) as archive:
-            if sum(i.file_size for i in archive.infolist()) > 512 * 1024 * 1024:
-                raise ValueError("工程展开大小超过 512 MB。")
             root = json.loads(archive.read("project.json"))
             if root["format"] != "skin-statue-project" or root["schema_version"] != 1:
                 raise ValueError("不支持的工程版本。")
