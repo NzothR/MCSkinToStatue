@@ -163,6 +163,8 @@ def posed_voxels(parsed, image, options):
                     for f, face in enumerate(FACES):
                         mask = nearest_face == f
                         nearest[mask] = sample_face(points[mask], face, size, patches[face])
+                    if obj["id"] == "cape":
+                        keep &= nearest[:, 3] >= options["alpha_threshold"]
                     colors = np.empty((len(points), 6, 4), dtype=np.uint8)
                     if layer == "overlay":
                         hit_faces = np.empty((len(points), 6), dtype=np.int8)

@@ -10,6 +10,37 @@ import { initHeldEditor } from "/static/held-editor.js";
 const $ = (selector) => document.querySelector(selector);
 const matchingInputs = [...document.querySelectorAll(".matching-controls input")];
 const matchingDefaults = Object.fromEntries(matchingInputs.map((input) => [input.id.replace("matching-", ""), Number(input.defaultValue)]));
+let preferencesWrite = Promise.resolve();
+
+/** 串行保存 change 操作，页面停止服务前等待最后一次写入。 */
+function saveAlgorithmPreferences() {
+  const settings = { matching: matchingSettings(), smoothness: Number($("#statue-smoothness").value), prefer_connected: $("#statue-connected").checked };
+  preferencesWrite = preferencesWrite.then(async () => {
+    const response = await fetch("/api/preferences", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings), keepalive: true });
+    if (!response.ok) throw new Error((await response.json()).detail);
+    $("#preferences-status").textContent = "选材设置已保存，下次启动自动恢复。";
+  }).catch((error) => { $("#preferences-status").textContent = `保存选材设置失败：${error.message}`; });
+}
+
+/** 先恢复允许持久化的项目，再初始化注册表界面，其他控件保持启动默认值。 */
+async function restorePreferences() {
+  const controls = [...matchingInputs, $("#statue-smoothness"), $("#statue-connected"), $("#reset-matching"), $("#index-file"), $("#scan-instance")];
+  controls.forEach((input) => { input.disabled = true; });
+  $("#resource-status").textContent = "正在恢复上次的运行时索引与选材设置…";
+  try {
+    const response = await fetch("/api/preferences");
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail);
+    for (const input of matchingInputs) input.value = result.algorithm.matching[input.id.replace("matching-", "")];
+    const strategy = $("#statue-smoothness");
+    if (![...strategy.options].some((o) => o.value === String(result.algorithm.smoothness))) strategy.add(new Option(String(result.algorithm.smoothness), String(result.algorithm.smoothness)));
+    strategy.value = result.algorithm.smoothness;
+    $("#statue-connected").checked = result.algorithm.prefer_connected;
+    $("#preferences-status").textContent = "已恢复选材设置；成功导入的运行时索引也会自动保留。";
+  } catch (error) { $("#preferences-status").textContent = `恢复设置失败：${error.message}`; }
+  controls.forEach((input) => { input.disabled = false; });
+  initResourcePanel(() => ({ matching: matchingSettings(), smoothness: Number($("#statue-smoothness").value) }));
+}
 
 /** 保存到生成参数，候选排序和工程恢复使用同一组权重。 */
 function matchingSettings() {
@@ -306,10 +337,10 @@ function displayPose(data) {
         const map=new THREE.DataTexture(pixels,source.width,source.height);
         map.colorSpace=THREE.SRGBColorSpace;map.magFilter=THREE.NearestFilter;map.minFilter=THREE.NearestFilter;map.needsUpdate=true;return map;
       });
-      const standard=maps.map((map)=>new THREE.MeshStandardMaterial({map,roughness:1,side:THREE.DoubleSide}));
-      const flat=maps.map((map)=>new THREE.MeshBasicMaterial({map,side:THREE.DoubleSide}));
-      const mesh=new THREE.Mesh(new THREE.BoxGeometry(16,16,16),standard);
-      mesh.matrixAutoUpdate=false;mesh.matrix.fromArray(obj.matrix);mesh.userData={standard,flat,hand:obj.id.split("_")[0],restMatrix:mesh.matrix.clone()};heldGroup.add(mesh);
+      const standard=maps.map((map)=>new THREE.MeshStandardMaterial({map,roughness:1,side:THREE.DoubleSide,alphaTest:obj.id === "cape" ? obj.alpha_threshold / 255 : 0}));
+      const flat=maps.map((map)=>new THREE.MeshBasicMaterial({map,side:THREE.DoubleSide,alphaTest:obj.id === "cape" ? obj.alpha_threshold / 255 : 0}));
+      const mesh=new THREE.Mesh(new THREE.BoxGeometry(...obj.size),standard);
+      mesh.matrixAutoUpdate=false;mesh.matrix.fromArray(obj.matrix);mesh.userData={standard,flat,...(obj.id === "cape" ? {part:"cape"} : {hand:obj.id.split("_")[0]}),restMatrix:mesh.matrix.clone()};heldGroup.add(mesh);
       continue;
     }
     const geometry = obj.thickness > 0 ? new THREE.BoxGeometry(16 / obj.width, 16 / obj.height, obj.thickness) : new THREE.PlaneGeometry(16 / obj.width, 16 / obj.height);
@@ -362,6 +393,7 @@ async function restoreProject(payload) {
   await displayStatue(result);
   editor.reset(result);
   if (result.workspace) $("#statue-state").textContent = "已恢复皮肤编辑设置；重新生成应用姿势与持物";
+  saveAlgorithmPreferences();
   updateGenerateButton();
 }
 
@@ -693,6 +725,7 @@ function bindUI() {
   $("#stop-server").addEventListener("click",async()=>{
     const button=$("#stop-server");button.disabled=true;button.textContent="正在停止…";
     try {
+      await preferencesWrite;
       const response=await fetch("/api/shutdown",{method:"POST"});
       const result=await response.json();
       if(!response.ok)throw new Error(result.detail);
@@ -719,6 +752,7 @@ function bindUI() {
       modelInputs.forEach((input) => { input.checked = input.value === result.model; input.disabled = false; });
       const blob = await (await fetch(result.image)).blob();
       await importSkin(new File([blob], `${result.username}.png`, { type: "image/png" }));
+      poseControls.addCapes(result.capes || []);
     } catch (error) { showNotice(error.message, true); }
     finally { button.disabled = false; button.textContent = "查询皮肤"; }
   });
@@ -777,8 +811,13 @@ function bindUI() {
   document.querySelectorAll(".statue-settings select, .statue-settings input").forEach((input) => input.addEventListener("change", markStatueChanged));
   $("#reset-matching").addEventListener("click", () => {
     for (const input of matchingInputs) input.value = matchingDefaults[input.id.replace("matching-", "")];
+    $("#statue-smoothness").value = "0.2";
+    $("#statue-connected").checked = false;
+    saveAlgorithmPreferences();
+    window.dispatchEvent(new Event("connected-preference"));
     markStatueChanged();
   });
+  for (const input of [...matchingInputs, $("#statue-smoothness"), $("#statue-connected")]) input.addEventListener("change", saveAlgorithmPreferences);
   $("#statue-connected").addEventListener("change", () => { updateGenerateButton(); window.dispatchEvent(new Event("connected-preference")); });
   window.addEventListener("palette-loaded", (event) => {
     palette = event.detail;
@@ -827,4 +866,4 @@ try {
   showNotice(`请使用启用硬件加速、支持 WebGL 2 的浏览器。${error.message}`, true);
 }
 
-initResourcePanel(() => ({ matching: matchingSettings(), smoothness: Number($("#statue-smoothness").value) }));
+void restorePreferences();

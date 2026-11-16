@@ -66,11 +66,27 @@ Three.js 0.170.0 和 OrbitControls 已随项目保存，运行时无需访问 CD
 
 本地化名称来自 0.1.2 索引中真实创造栏 ItemStack 的 `getDisplayName()`，跟随导出时的游戏语言；清单同时记录 `language`。旧索引没有名称字段，会显示注册名、ID 和重新导出提示。请替换辅助模组 JAR，重启游戏后重新运行 `/skinindex export`，再导入新 ZIP、重新生成，获得完整的游戏名称。
 
+## 启动恢复与算法默认值
+
+每次成功导入运行时注册表与纹理 ZIP（包括项目索引、文件上传及 `--index`）后，将原包副本保存到项目 `.cache/preferences/runtime-index.zip`。下一次打开页面时自动读取此副本并重建调色板；移动原 ZIP 不影响恢复，重新导入会替换缓存。连接图仍按现有的实例资源加载流程提供，实例路径不自动保存。
+
+选材策略、优先连接纹理开关和五项算法参数在修改后自动保存到 `.cache/preferences/matching.json`，下次打开恢复。打开工程后使用的选材设置也会成为最近设置。随时点击“恢复算法默认值”，会恢复平衡策略、关闭连接优先并重置五项权重，同时保存默认值。界面显示保存结果，停止服务前等待已排队的设置写入。缓存不提交 Git。
+
+跨启动只恢复以上两项；皮肤、披风列表、姿势、尺寸、图层和其他设置通过明确打开工程／草稿来恢复。更新代码前请保存工程，再停止本地服务并重启。首次更新后重新导入一次 ZIP 即可建立索引缓存。
+
 ## 正版 Java 用户名导入
 
 在“导入皮肤”输入 Java 正版用户名，点击“查询皮肤”。服务端依次查询 Mojang 用户名档案、UUID 会话档案和官方纹理图片，自动按皮肤元数据选择 Steve 或 Alex，再复用 PNG 解析与图层流程。无需登录微软账户。该操作需要联网，其他本地导入、编辑及工程恢复可离线使用。找不到用户名、官方限流、网络失败或账号尚未设置自定义皮肤时，界面显示具体原因并保留已有皮肤。
 
 使用的官方端点为 `https://api.mojang.com/users/profiles/minecraft/{username}`、`https://sessionserver.mojang.com/session/minecraft/profile/{uuid}` 与 `https://textures.minecraft.net/texture/{hash}`。纹理档案结构同时依据构建依赖中的 Mojang Authlib 1.5.21 `YggdrasilMinecraftSessionService` 字节码核对。
+
+## 官方披风与多披风列表
+
+用户名查询同时读取会话档案的 `CAPE`，从官方纹理域下载并加入“披风”列表；没有当前披风时显示说明，已有列表保留可手动选择。这里收集公开档案返回的当前披风，不枚举账号未佩戴的全部收藏。要补充其他披风，可在官方账号切换佩戴后重新查询，或一次导入多张本地披风 PNG。支持 64×32 标准图集与最大 512×256 的等比例高清图，单张最多 2 MB，一份工程最多 32 张。列表去重，当前人物任选一张佩戴，也可选择不佩戴、临时隐藏或移除候选。
+
+披风按独立的 10×16×1 长方体和官方六面图集渲染与体素化，绑定肩背上沿，随躯干整体旋转。单击披风或点击“可视化旋转披风”显示一个蓝色局部 Z 轴环，角度限制 0～120°，0 为垂直下垂，正值向后扬起；X/Y 旋转、位移、缩放均锁定。局部 Z 轴沿披风连接上沿，对应人物模型横向的 X 轴，不是人物世界竖直轴或前后轴。数值输入、单轴手柄与“重置为 0°”共用同一参数。
+
+披风候选 PNG、当前选择、显示开关与角度随工程／草稿保存，旧工程默认不佩戴。皮肤预览即时更新；重新生成雕像后披风体素才进入材料统计、预览与结构导出。选材、固定分组编辑和空心主体流程照常工作。其他用户的披风和未佩戴的历史披风不会被当成当前账号拥有的列表。更新后需重启本地服务；游戏内容测试由用户完成。
 
 ## 独立滚动、姿势和左右手持物
 
@@ -294,7 +310,9 @@ skin_statue/core/skin.py    UV、旧皮肤转换、图层解析、PNG 编码
 skin_statue/core/palette.py 逐面颜色、候选筛选和单色匹配
 skin_statue/core/statue.py  整数体素、多面匹配、空心处理、贪心网格和图集
 skin_statue/core/editing.py 候选排序、固定分组替换、自包含工程读写
-skin_statue/core/pose.py / posed_voxels.py 关节、持握变换和旋转体素采样
+skin_statue/core/pose.py / posed_voxels.py 关节、披风、持握变换和旋转体素采样
+skin_statue/core/cape.py 官方披风图集解析
+skin_statue/preferences.py 项目内索引副本与白名单算法设置
 skin_statue/core/connected_preview.py MyCTMLib 邻接选片与预览材质
 skin_statue/core/schematic.py Alpha Schematic、扩展 ID、I 点偏移、读回校验和诊断 ZIP
 skin_statue/resources/      实例扫描、CTM 规则、运行时注册表导入
@@ -340,7 +358,9 @@ node --check skin_statue/web/vendor/TransformControls.js
 | `GET /api/resources/loaded` | 返回当前已载入调色板的概要 |
 | `POST /api/statue/generate` | multipart `file`、`model`、JSON 字符串 `options`（含可选 `matching` 细调参数）；返回图集、材料统计及批处理网格 |
 | `GET /api/statue/{id}/export` | `profile=worldedit_gtnh/mcedit/schematica_gtnh`，`bundle=true` 时返回结构及诊断 ZIP |
-| `POST /api/skin/username` | JSON `username`；查询官方 Java 皮肤及模型 |
+| `GET/PUT /api/preferences` | 恢复最近索引并读取／保存白名单算法设置 |
+| `POST /api/cape` | multipart `file`；导入披风 PNG 图集并返回候选 |
+| `POST /api/skin/username` | JSON `username`；查询官方 Java 皮肤、模型和当前披风 `capes` |
 | `GET /api/statue/{id}/block` | `x,y,z` 为裁剪盒内坐标，返回真实材料、固定分组 `group`、原始材料 `origin` 与分组数量 |
 | `GET /api/statue/{id}/candidates` | `key` 指定当前材料、`group` 指定固定分组，按该组原皮肤目标色返回候选排序 |
 | `POST /api/statue/{id}/replace` | JSON `source,target,group`；只替换指定原始分组并生成独立快照 |
@@ -350,7 +370,7 @@ node --check skin_statue/web/vendor/TransformControls.js
 | `POST /api/statue/{id}/draft` | 在项目内持久保存草稿 |
 | `GET /api/drafts` / `POST /api/drafts/{id}/open` | 列出草稿／打开草稿 |
 | `POST /api/shutdown` | 响应后请求当前 Python／Uvicorn 服务正常退出 |
-| `GET /api/poses` / `POST /api/pose` | 静态姿势预设／同源关节与持物矩阵 |
+| `GET /api/poses` / `POST /api/pose` | 静态姿势预设／同源关节、披风与持物矩阵（披风设置为 `cape.library/selected/enabled/angle`） |
 | `GET/POST /api/scene/resources` | 当前资源概要／只读加载实例图标与连接图 |
 | `GET /api/scene/item` | `key`、可选 `palette_id`；实际物品图标与持握类型 |
 | `GET /api/palettes/{id}/items` | `search`、`offset`、`limit`；本地化物品搜索 |

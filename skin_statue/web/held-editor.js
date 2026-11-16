@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { TransformControls } from "/static/vendor/TransformControls.js";
 
-const JOINTS = {head:"头部",body:"躯干（整个模型）",left_arm:"左臂",right_arm:"右臂",left_leg:"左腿",right_leg:"右腿"};
+const JOINTS = {head:"头部",body:"躯干（整个模型）",left_arm:"左臂",right_arm:"右臂",left_leg:"左腿",right_leg:"右腿",cape:"披风上沿"};
 
 /** 共用三维手柄编辑持物与关节；即时矩阵补偿使拖动不等待服务端重建网格。 */
 export function initHeldEditor(host) {
@@ -32,10 +32,12 @@ export function initHeldEditor(host) {
     const show = selected !== null && host.mode() === "skin";
     toolbar.hidden = !show; helper.visible = show; control.enabled = show;
     const joint = selectionKind === "joint";
+    const cape = joint && selected === "cape";
+    control.showX = !cape; control.showY = !cape; control.showZ = true;
     toolbar.querySelectorAll("[data-item-transform]").forEach((b)=>{b.hidden=joint && b.dataset.itemTransform!=="rotate";});
     document.querySelector("#held-transform-scale-options").hidden=joint;
     document.querySelector("#joint-transform-reset").hidden=!joint;
-    document.querySelector("#held-transform-hint").textContent=joint
+    document.querySelector("#held-transform-hint").textContent=cape ? "仅可拖动蓝色局部 Z 轴旋转环；绕肩背上沿向后扬起 0～120°，位置、缩放与其他轴已锁定。" : joint
       ? "拖动红 X／绿 Y／蓝 Z 旋转环；躯干旋转整个模型，手臂旋转会带动对应手持物品。"
       : "拖动红 X／绿 Y／蓝 Z 手柄；位移使用世界轴，旋转和缩放使用握持点局部轴。";
   }
@@ -108,7 +110,7 @@ export function initHeldEditor(host) {
     }
     host.showSkin();selected=part;selectionKind="joint";setMode("rotate");
     document.querySelector("#held-transform-name").textContent=`旋转${JOINTS[part]}`;
-    document.querySelector("#pose-status").textContent=`已选中${JOINTS[part]}，拖动三色旋转环调整角度。`;
+    document.querySelector("#pose-status").textContent=`已选中${JOINTS[part]}，${part === "cape" ? "拖动蓝色单轴旋转环" : "拖动三色旋转环"}调整角度。`;
     refreshSettings();control.attach(proxy);visible();
   }
   function finish() {
@@ -123,6 +125,7 @@ export function initHeldEditor(host) {
   control.addEventListener("objectChange", () => {
     if (!selected) return;
     if(selectionKind==="joint") {
+      if (selected === "cape") proxy.rotation.set(0, 0, THREE.MathUtils.degToRad(THREE.MathUtils.clamp(THREE.MathUtils.radToDeg(proxy.rotation.z), 0, 120)), "ZYX");
       const angles=[proxy.rotation.x,proxy.rotation.y,proxy.rotation.z].map((v)=>((THREE.MathUtils.radToDeg(v)+180)%360+360)%360-180);
       host.rotateJoint(selected,angles);applyDelta();return;
     }

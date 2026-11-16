@@ -156,6 +156,8 @@ export function initResourcePanel(matchingOptions) {
   });
   window.addEventListener("connected-preference", () => { offset = 0; void loadPage(); });
   requestJSON("/api/resources/loaded").then((result) => {
+    const preferred = result.palettes.find((p) => p.id === result.preferred);
+    if (preferred && !palette) return showPalette({ palette: preferred });
     if (result.palettes.length === 1 && !palette) return showPalette({ palette: result.palettes[0] });
   }).catch((error) => report(error.message, true));
   requestJSON("/api/resources/local").then((result) => {

@@ -8,6 +8,8 @@ from itertools import product
 import numpy as np
 from PIL import Image, UnidentifiedImageError
 
+from skin_statue.core.cape import cape_faces
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -163,6 +165,31 @@ def scene_objects(parsed, options):
                     **({"cube_faces": cube_faces} if cube else {}),
                 }
             )
+    cape = options.get("cape", {})
+    if cape.get("enabled", True) and cape.get("selected"):
+        selected = next((c for c in cape["library"] if c["id"] == cape["selected"]), None)
+        if selected is None:
+            raise ValueError("所选披风不在当前披风列表中。")
+        image, faces = cape_faces(selected["image"])
+        # 局部 Z 轴映射至肩背横向铰链，正角使披风向背后扬起。
+        frame = torso @ translation(0, 24, -2.5) @ rotation([0, 90, 0])
+        hinge = rotation([0, 0, cape.get("angle", 10)])
+        objects.append(
+            {
+                "id": "cape",
+                "image": image,
+                "cube_faces": faces,
+                "size": np.array([10.0, 16.0, 1.0]),
+                # 披风图集的主图在 south 面，绕 Y 转半圈使它朝背后的外侧。
+                "matrix": frame
+                @ hinge
+                @ rotation([0, -90, 0])
+                @ translation(0, -8, -0.5)
+                @ rotation([0, 180, 0]),
+                "joint_frame": frame,
+                "joint_matrix": hinge,
+            }
+        )
     # 任意姿势都以最低点落地；物品只随手臂及躯干变换，不改写姿势角度。
     corners = np.array(list(product((-0.5, 0.5), repeat=3)))
     lowest = min(
@@ -191,7 +218,11 @@ def pose_preview(parsed, options):
     """打包世界矩阵、关节父坐标与局部旋转、持物编辑矩阵和像素。"""
     result = []
     for obj in scene_objects(parsed, options):
-        row = {"id": obj["id"], "matrix": obj["matrix"].T.reshape(-1).tolist()}
+        row = {
+            "id": obj["id"],
+            "matrix": obj["matrix"].T.reshape(-1).tolist(),
+            "size": obj["size"].tolist(),
+        }
         if "joint_frame" in obj:
             row.update(
                 joint_frame=obj["joint_frame"].T.reshape(-1).tolist(),
@@ -204,6 +235,8 @@ def pose_preview(parsed, options):
                 grip=obj["grip"].tolist(),
             )
         if "cube_faces" in obj:
+            if obj["id"] == "cape":
+                row["alpha_threshold"] = options.get("alpha_threshold", 128)
             row["cube"] = {
                 face: {
                     "width": image.width,

@@ -10,6 +10,7 @@ function normalizedRotations(rotations) {
 export function initPoseControls(host) {
   let pose = {};
   let held = {};
+  let cape = { library: [], selected: null, enabled: true, angle: 10 };
   let presets = [];
   let catalog = [];
   let catalogOffset = 0;
@@ -36,7 +37,7 @@ export function initPoseControls(host) {
     applying = true; host.sync();
     try {
       const result = await json("/api/pose", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: host.model(), pose, held, alpha_threshold: Number($("#statue-alpha").value) }) });
+        body: JSON.stringify({ model: host.model(), pose, held, cape: {...cape, library: cape.library.filter((c) => c.id === cape.selected)}, alpha_threshold: Number($("#statue-alpha").value) }) });
       if (token !== sequence) return;
       host.display(result);
       $("#pose-status").textContent = "姿势与持物已更新；生成雕像使用这些设置。";
@@ -59,6 +60,7 @@ export function initPoseControls(host) {
   }
   /** 手柄、数值面板和单关节重置都更新同一份姿势；其他部位和装备设置保持原值。 */
   function rotateJoint(part,angles) {
+    if (part === "cape") { cape.angle = Math.min(120, Math.max(0, angles[2])); showCape(); changed(); return; }
     pose[part] = [...angles]; $("#pose-preset").value = "custom";
     showAngles(); changed();
   }
@@ -92,6 +94,38 @@ export function initPoseControls(host) {
     const preset = presets.find((p) => p.id === $("#pose-preset").value);
     if (preset) { pose = normalizedRotations(preset.rotations); showAngles(); changed(); }
   });
+
+  /** 披风候选与当前佩戴分开，切换和单轴手柄共用一份状态。 */
+  function showCape() {
+    $("#cape-list").replaceChildren(new Option("不佩戴披风", ""), ...cape.library.map((c) => new Option(`${c.name} · ${c.id.slice(0, 8)}`, c.id)));
+    $("#cape-list").value = cape.selected || "";
+    $("#cape-angle").value = cape.angle;
+    $("#cape-enabled").checked = cape.enabled;
+    for (const id of ["cape-edit", "cape-reset", "cape-remove", "cape-angle"]) $(`#${id}`).disabled = !cape.selected;
+  }
+  function addCapes(rows) {
+    const library = new Map(cape.library.map((c) => [c.id, c]));
+    for (const row of rows) library.set(row.id, row);
+    if (library.size > 32) throw new Error("一份工程最多保留 32 张披风，请先移除不需要的披风。");
+    cape.library = [...library.values()]; cape.selected = rows.at(-1)?.id || null; cape.enabled = true;
+    showCape(); changed();
+    $("#cape-status").textContent = rows.length ? `已加入披风；当前有 ${library.size} 张，可在列表中切换。` : "该玩家的公开档案没有当前披风；可选择已收集披风或导入 PNG。";
+  }
+  $("#cape-list").addEventListener("change", () => { cape.selected = $("#cape-list").value || null; showCape(); changed(); });
+  $("#cape-enabled").addEventListener("change", () => { cape.enabled = $("#cape-enabled").checked; changed(); });
+  $("#cape-angle").addEventListener("input", () => { if (!$("#cape-angle").checkValidity()) return; cape.angle = Number($("#cape-angle").value); changed(); });
+  $("#cape-reset").addEventListener("click", () => rotateJoint("cape", [0, 0, 0]));
+  $("#cape-edit").addEventListener("click", () => { cape.enabled = true; showCape(); host.changed(); void apply().then(() => window.dispatchEvent(new CustomEvent("edit-pose-joint", { detail: "cape" }))); });
+  $("#cape-remove").addEventListener("click", () => { cape.library = cape.library.filter((c) => c.id !== cape.selected); cape.selected = null; showCape(); changed(); });
+  $("#cape-file").addEventListener("change", async (event) => {
+    const files = [...event.target.files]; event.target.value = "";
+    try {
+      const rows = [];
+      for (const file of files) { const form = new FormData(); form.append("file", file); rows.push(await json("/api/cape", { method: "POST", body: form })); }
+      if (rows.length) addCapes(rows);
+    } catch (error) { $("#cape-status").textContent = error.message; }
+  });
+  showCape();
 
   /** 用资源包实际图片填充装备，类型可按工具／普通物品／弓独立调整。 */
   function showHand(hand) {
@@ -219,7 +253,8 @@ export function initPoseControls(host) {
   void json("/api/scene/resources").then(data=>{showCatalog(data);if(host.palette())return refreshCatalog();}).catch((error) => { $("#scene-resource-status").textContent = error.message; });
   return {
     get busy() { return applying || applyTimer !== null; },
-    get settings() { return structuredClone({ pose, held }); },
+    get settings() { return structuredClone({ pose, held, cape }); },
+    addCapes,
     apply,
     /** 三维手柄写回同一份设置，数值面板、工程和雕像生成共用。 */
     transformHeld(hand,values) {
@@ -228,11 +263,12 @@ export function initPoseControls(host) {
     },
     getHeld(hand) { return held[hand] ? structuredClone(held[hand]) : null; },
     rotateJoint,
-    getJoint(part) { return [...(pose[part] || [0,0,0])]; },
+    getJoint(part) { return part === "cape" ? [0, 0, cape.angle] : [...(pose[part] || [0,0,0])]; },
     /** 旧工程没有姿势字段时按站立空手恢复，新工程保留两手 PNG。 */
     async restore(options) {
       sequence++; itemRequests.left++; itemRequests.right++;
       pose = normalizedRotations(options.pose || {}); held = structuredClone(options.held || {});
+      cape = structuredClone(options.cape || { library: [], selected: null, enabled: true, angle: 10 }); showCape();
       for (const item of Object.values(held)) if (item.rotation) item.rotation = normalizedRotations({ item: item.rotation }).item;
       $("#pose-preset").value = Object.keys(pose).length ? "custom" : "standing";
       showAngles(); for (const hand of ["right", "left"]) showHand(hand);

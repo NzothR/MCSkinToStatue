@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from skin_statue.core.cape import read_cape
 from skin_statue.core.editing import (
     block_at,
     open_project,
@@ -28,8 +29,9 @@ from skin_statue.core.editing import (
 from skin_statue.core.palette import DEFAULT_MATCHING, Palette
 from skin_statue.core.pose import pose_preview
 from skin_statue.core.schematic import PROFILES, export_bundle, placement, schematic_bytes
-from skin_statue.core.skin import PARTS, parse_skin
+from skin_statue.core.skin import PARTS, parse_skin, png_url
 from skin_statue.core.statue import GeneratedStatue, generate_statue
+from skin_statue.preferences import INDEX, read_matching, remember_index, save_matching
 from skin_statue.resources.instance import InstanceResources
 from skin_statue.resources.java_skin import fetch_skin
 from skin_statue.resources.registry import import_runtime_index, vanilla_palette
@@ -38,6 +40,7 @@ from skin_statue.resources.scene_resources import attach_connections, item_catal
 WEB = Path(__file__).parent / "web"
 app = FastAPI(title="Skin Statue · 皮肤预览", docs_url=None, redoc_url=None)
 app.state.server = None
+app.state.preferred_palette = None
 PALETTES: dict[str, Palette] = {}
 STATUES: OrderedDict[str, GeneratedStatue] = OrderedDict()
 PROJECT = WEB.parents[1]
@@ -75,11 +78,29 @@ class HeldItem(BaseModel):
 PartName = Literal["head", "body", "left_arm", "right_arm", "left_leg", "right_leg"]
 
 
+class CapeTexture(BaseModel):
+    """候选披风存入工程，切换时无需再次联网。"""
+
+    id: str
+    name: str
+    image: str = Field(max_length=3 * 1024 * 1024)
+
+
+class CapeSettings(BaseModel):
+    """一份人物选择一件披风，只开放肩背铰链的局部 Z 轴。"""
+
+    library: list[CapeTexture] = Field(default_factory=list, max_length=32)
+    selected: str | None = None
+    enabled: bool = True
+    angle: float = Field(default=10, ge=0, le=120)
+
+
 class SceneOptions(BaseModel):
     """静态姿势和独立持物配置；角度单位为度。"""
 
     pose: dict[PartName, tuple[Angle, Angle, Angle]] = Field(default_factory=dict)
     held: dict[Literal["left", "right"], HeldItem] = Field(default_factory=dict)
+    cape: CapeSettings = Field(default_factory=CapeSettings)
 
 
 class PoseRequest(SceneOptions):
@@ -170,6 +191,21 @@ def remember(statue: GeneratedStatue) -> dict:
 async def username_skin(request: UsernameRequest) -> dict:
     """查询正版 Java 皮肤并携带官方手臂模型信息。"""
     return await run_in_threadpool(fetch_skin, request.username.strip())
+
+
+@app.post("/api/cape")
+async def import_cape(file: Annotated[UploadFile, File()]) -> dict:
+    """导入披风图集并返回与官方查询相同的候选描述。"""
+    try:
+        data = await file.read(2 * 1024 * 1024 + 1)
+        image = read_cape(data)
+        return {
+            "id": hashlib.sha256(data).hexdigest(),
+            "name": file.filename or "本地披风",
+            "image": png_url(image),
+        }
+    finally:
+        await file.close()
 
 
 @app.get("/api/statue/{identity}/snapshot")
@@ -339,6 +375,36 @@ class StatueOptions(SceneOptions):
     prefer_connected: bool = False
     excluded: set[str] = Field(default_factory=set)
     layers: list[str]
+
+
+class MatchingPreferences(BaseModel):
+    """跨启动只恢复算法偏好，不保存其他工作区设置。"""
+
+    smoothness: float = Field(default=0.2, ge=0, le=1)
+    prefer_connected: bool = False
+    matching: MatchingParameters = Field(default_factory=MatchingParameters)
+
+
+@app.get("/api/preferences")
+def preferences() -> dict:
+    """初始化上次成功读取的索引；失败通过正常错误响应提示，可重新导入。"""
+    settings = MatchingPreferences.model_validate(read_matching()).model_dump()
+    if INDEX.is_file():
+        data = INDEX.read_bytes()
+        identity = hashlib.sha256(data).hexdigest()[:20]
+        if identity not in PALETTES:
+            palette = import_runtime_index(data)
+            attach_scene_resources(palette)
+            PALETTES[palette.id] = palette
+        app.state.preferred_palette = identity
+    return {"algorithm": settings}
+
+
+@app.put("/api/preferences")
+def update_preferences(request: MatchingPreferences) -> dict:
+    """允许随时覆盖和恢复算法默认值，保存值经过与生成接口相同的范围校验。"""
+    save_matching(request.model_dump())
+    return {"saved": True}
 
 
 class ScanRequest(BaseModel):
@@ -562,6 +628,8 @@ async def load_index(file: Annotated[UploadFile, File()]) -> dict:
             raise HTTPException(422, str(exc)) from exc
         attach_scene_resources(palette)
         PALETTES[palette.id] = palette
+        await run_in_threadpool(remember_index, data)
+        app.state.preferred_palette = palette.id
         return {"palette": palette.summary()}
     finally:
         await file.close()
@@ -581,7 +649,10 @@ def local_indexes() -> dict:
 @app.get("/api/resources/loaded")
 def loaded_palettes() -> dict:
     """让界面使用启动参数预载的调色板。"""
-    return {"palettes": [palette.summary() for palette in PALETTES.values()]}
+    return {
+        "palettes": [palette.summary() for palette in PALETTES.values()],
+        "preferred": app.state.preferred_palette,
+    }
 
 
 @app.post("/api/resources/local/{filename}")
@@ -597,6 +668,8 @@ async def load_local_index(filename: str) -> dict:
         if identity not in PALETTES:
             PALETTES[identity] = import_runtime_index(data)
             attach_scene_resources(PALETTES[identity])
+        remember_index(data)
+        app.state.preferred_palette = identity
         return {"palette": PALETTES[identity].summary()}
 
     try:

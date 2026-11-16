@@ -288,6 +288,9 @@ def generate_statue(parsed: dict, palette: Palette, options: dict) -> GeneratedS
     articulated = any(any(v for v in angle) for angle in options.get("pose", {}).values()) or any(
         h.get("image") for h in options.get("held", {}).values()
     )
+    articulated |= bool(
+        options.get("cape", {}).get("enabled", True) and options.get("cape", {}).get("selected")
+    )
     if articulated:
         low, occupied, base, targets = posed_voxels(parsed, image, options)
     else:

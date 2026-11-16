@@ -7,7 +7,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-from skin_statue.core.skin import parse_skin
+from skin_statue.core.cape import read_cape
+from skin_statue.core.skin import parse_skin, png_url
 
 
 def fetch_skin(username: str) -> dict:
@@ -58,9 +59,25 @@ def fetch_skin(username: str) -> dict:
     data = read("https://textures.minecraft.net" + location.path, 2 * 1024 * 1024)
     model = "alex" if skin.get("metadata", {}).get("model") == "slim" else "steve"
     parsed = parse_skin(data, model)
+    capes = []
+    if "CAPE" in textures:
+        cape_url = urlsplit(textures["CAPE"]["url"])
+        if cape_url.hostname != "textures.minecraft.net" or not re.fullmatch(
+            r"/texture/[0-9a-f]+", cape_url.path
+        ):
+            raise ValueError("官方档案中的披风纹理地址无效。")
+        cape = read_cape(read("https://textures.minecraft.net" + cape_url.path, 2 * 1024 * 1024))
+        capes.append(
+            {
+                "id": cape_url.path.rsplit("/", 1)[-1],
+                "name": f"{profile['name']} · 官方当前披风",
+                "image": png_url(cape),
+            }
+        )
     return {
         "username": profile["name"],
         "uuid": profile["id"],
         "model": model,
         "image": parsed["images"]["normalized"],
+        "capes": capes,
     }

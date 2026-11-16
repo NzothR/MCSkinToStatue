@@ -25,8 +25,12 @@ def main() -> None:
 
     if args.index:
         logging.info("Loading runtime block index: %s", args.index)
-        palette = import_runtime_index(args.index.read_bytes())
+        data = args.index.read_bytes()
+        palette = import_runtime_index(data)
         PALETTES[palette.id] = palette
+        from skin_statue.preferences import remember_index
+
+        remember_index(data)
         logging.info(
             "Loaded %s registry blocks, %s states, %s static candidates",
             palette.registry_count,
