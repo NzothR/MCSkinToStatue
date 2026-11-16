@@ -9,6 +9,7 @@ from dataclasses import replace as replace_snapshot
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
@@ -26,6 +27,7 @@ from skin_statue.core.editing import (
     rebuild,
     replace_material,
 )
+from skin_statue.core.item_images import search_items
 from skin_statue.core.palette import DEFAULT_MATCHING, Palette
 from skin_statue.core.pose import pose_preview
 from skin_statue.core.schematic import PROFILES, export_bundle, placement, schematic_bytes
@@ -33,6 +35,7 @@ from skin_statue.core.skin import PARTS, parse_skin, png_url
 from skin_statue.core.statue import GeneratedStatue, generate_statue
 from skin_statue.preferences import INDEX, read_matching, remember_index, save_matching
 from skin_statue.resources.instance import InstanceResources
+from skin_statue.resources.item_catalog import stop_item_imports
 from skin_statue.resources.java_skin import fetch_skin
 from skin_statue.resources.registry import import_runtime_index, vanilla_palette
 from skin_statue.resources.scene_resources import attach_connections, item_catalog, runtime_item
@@ -56,6 +59,7 @@ async def shutdown(background: BackgroundTasks) -> dict:
     """响应发出后停止当前 run.py 的 Uvicorn 服务，使 Python 进程正常退出。"""
     if app.state.server is None:
         raise HTTPException(409, "请通过 run.py 或 start.bat 启动服务以使用页面退出按钮。")
+    background.add_task(stop_item_imports)
     background.add_task(setattr, app.state.server, "should_exit", True)
     return {"status": "stopping"}
 
@@ -73,6 +77,7 @@ class HeldItem(BaseModel):
     stretch: tuple[AxisScale, AxisScale, AxisScale] = (1, 1, 1)
     thickness: float = Field(default=0, ge=0, le=8)
     rotate_around: bool = False
+    source_id: str | None = None
 
 
 PartName = Literal["head", "body", "left_arm", "right_arm", "left_leg", "right_leg"]
@@ -485,27 +490,40 @@ def palette_items(
 ) -> dict:
     """按本地化名称、注册 ID、数字 ID 查找真实物品变体，分页控制浏览器开销。"""
     palette = get_palette(identity)
-    needle = search.casefold()
-    rows = [
-        e
-        for e in palette.items
-        if needle
-        in (e["key"] + " " + str(e["numeric_id"]) + " " + (e.get("display_name") or "")).casefold()
-    ]
+    rows = list(search_items(list(palette.items), search))
     return {
         "items": [
             {
                 "id": e["key"],
                 "label": f"{e.get('display_name') or e['registry_name']} · {e['registry_name']} · ID {e['numeric_id']}:{e['damage']}"
+                + (" · 材料 " + "／".join(e["material_names"]) if e.get("material_names") else "")
                 + (" · 图标未解析" if e["status"] != "captured" else ""),
                 "status": e["status"],
+                "variants": e.get("variant_count", 1),
+                "image": f"/api/palettes/{identity}/item-image?key=" + quote(e["key"], safe="")
+                if e["status"] == "captured"
+                else None,
             }
             for e in rows[offset : offset + limit]
         ],
         "total": len(rows),
         "offset": offset,
-        "runtime": bool(palette.items),
+        "runtime": bool(palette.items) or palette.item_loading["total"] > 0,
+        "loading": palette.item_loading,
     }
+
+
+@app.get("/api/palettes/{identity}/item-image")
+def item_image(identity: str, key: str) -> Response:
+    """列表直接取缓存的外观缩略图，不触发重复合成或持物修改。"""
+    palette = get_palette(identity)
+    if key not in palette.item_images:
+        raise HTTPException(404, "该物品没有已捕获的图像。")
+    return Response(
+        palette.item_images[key],
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
 
 
 @app.get("/api/palettes/{identity}/items/export")
@@ -518,7 +536,8 @@ def export_item_mapping(identity: str) -> Response:
                 "format": "skin-statue-item-map",
                 "schema_version": 1,
                 "context": palette.context,
-                "items": palette.items,
+                "items": list(palette.items),
+                "item_loading": palette.item_loading,
                 "blocks": [
                     {
                         k: e.get(k)

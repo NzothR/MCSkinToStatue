@@ -1,10 +1,10 @@
-# Skin Statue Index 0.1.4
+# Skin Statue Index 0.1.5
 
 用于 GTNH 2.9.0（Minecraft 1.7.10／Forge 10.13.4.1614）的客户端辅助模组。导出当前世界连接后的真实方块和物品注册表、数字 ID、Metadata／Damage 与 NBT 变体、本地化名称、六面静态图标、多层物品图标和已加载纹理，供本地工具建立调色板。
 
 ## 安装与导出
 
-构建产物：项目根目录 `output/skinstatueindex-0.1.4.jar`，或者本目录 `build/libs/skinstatueindex-0.1.4.jar`。安装发布 JAR；`-dev.jar` 和 `-sources.jar` 用于开发。更新时替换旧版 JAR，重启客户端。现有 0.1.0／0.1.1 索引仍能导入；方块本地化名称需要 0.1.2+，物品映射需要 0.1.3 重新导出。
+构建产物：项目根目录 `output/skinstatueindex-0.1.5.jar`，或者本目录 `build/libs/skinstatueindex-0.1.5.jar`。安装发布 JAR；`-dev.jar` 和 `-sources.jar` 用于开发。更新时替换旧版 JAR，重启客户端。现有 0.1.0／0.1.1 索引仍能导入；方块本地化名称需要 0.1.2+，物品映射需要 0.1.3 重新导出。
 
 关闭游戏，把发布 JAR 放入客户端 `.minecraft/mods/` 后重启。无需安装到服务器。选择你真正使用的资源包，进入世界后保持客户端运行；默认等待 60 个客户端 tick 后自动开始导出。任务按客户端 tick 分段执行，单次约 6 ms 工作预算，每个状态的纹理读取不可再拆分。
 
@@ -23,6 +23,14 @@
 | `/skinindex cancel` | 取消任务，移除该任务未完成的 `.zip.part` |
 
 离开世界、切换维度或重载资源时取消当前任务。稳定后重新执行 `/skinindex export`。完成后切换资源包不会改变旧 ZIP，需重新导出。发生解析问题时，清单保留状态、错误类型及阶段；详细堆栈可通过调试日志查看。
+
+## 0.1.5 NBT 物品外观与材料样本
+
+普通物品保留逐层图标和首帧。对于有 Forge INVENTORY 渲染器的物品，按真实 NBT 在独立的 64×64 framebuffer 中绘制并读取静态 RGBA，解决 GT 工具普通 getIcon 返回 null 的问题；不绘制数量和原版耐久覆盖条。记录 `inventory_frame=true`、`pixel_source=client_inventory_frame`。恢复 GL 状态并在完成／取消时释放本模组 framebuffer；需要 OpenGL 3，失败继续记录 `unresolved` 和错误阶段。截图表示物品栏外观，装备模型仍按静态图像近似体素化。
+
+GT 的创造栏只给出少量默认工具样本，因此额外通过当前 GTNH 2.9.0 的公开材料与工具接口逐个构造主材变化、手柄变化的样本，标记 `variant_source=gt_material_api`，保留主／副材的本地化名称和电力配置。不枚举全交叉组合或数值属性，生成项不表示存在对应合成配方；原创造栏样本保留。对其他模组的 NBT 物品仍按真实创造栏条目读取。原始像素先哈希，重复外观复用同一 PNG，只有新像素需要 PNG 编码和 ZIP 写入；每个新样本按 tick 预算处理，`status` 同时报告当前变体进度。
+
+新增 `search_text` 和 `material_names`，给工具提供中文材料搜索。工具名称或说明读取失败记录独立错误，不会把成功的截图当成失败。更新 JAR 后重启游戏，在世界内重新导出；旧 ZIP 不会自动获得缺失图标或未导出的材料样本。
 
 ## 0.1.4 建筑分类
 

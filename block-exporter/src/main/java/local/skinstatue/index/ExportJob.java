@@ -75,6 +75,7 @@ final class ExportJob {
     private int variantCursor;
     private List<ItemStack> itemVariants;
     private boolean itemCreative;
+    private GtToolVariants toolVariants;
     private final JsonArray errors = new JsonArray();
     private final Map<String, JsonObject> textureCache = new HashMap<>();
     private final ZipOutputStream zip;
@@ -91,6 +92,8 @@ final class ExportJob {
     private Set<Integer> creativeMetadata;
     private Map<Integer, String> creativeNames;
     private int readFramebuffer = -1;
+    private final InventoryCapture inventoryCapture = new InventoryCapture();
+    private final byte[] inventoryHashPixels = new byte[64 * 64 * 4];
     private final World capturedWorld;
 
     /** Snapshot the active names after the client has entered a world. */
@@ -157,15 +160,36 @@ final class ExportJob {
             }
             itemCreative = !itemVariants.isEmpty();
             if (itemVariants.isEmpty()) itemVariants.add(new ItemStack(item, 1, 0));
+            try {
+                toolVariants = GtToolVariants.forItem(item, itemVariants);
+            } catch (ReflectiveOperationException | LinkageError exception) {
+                toolVariants = null;
+                recordError(name, -1, "gt_tool_materials", exception);
+            }
             variantCursor = 0;
         }
-        ItemStack stack = itemVariants.get(variantCursor);
+        boolean generated = variantCursor >= itemVariants.size();
+        ItemStack stack;
+        try {
+            stack = generated ? toolVariants.next() : itemVariants.get(variantCursor);
+        } catch (ReflectiveOperationException exception) {
+            recordError(name, -1, "gt_tool_variant", exception);
+            if (!toolVariants.hasNext()) {
+                itemCursor++;
+                itemVariants = null;
+                toolVariants = null;
+            }
+            return;
+        }
         JsonObject entry = new JsonObject();
         entry.addProperty("registry_name", name);
         entry.addProperty("numeric_id", Item.getIdFromItem(item));
         entry.addProperty("damage", stack.getItemDamage());
-        entry.addProperty("creative_confirmed", itemCreative);
-        if (stack.hasTagCompound()) entry.addProperty(
+        entry.addProperty("creative_confirmed", !generated && itemCreative);
+        entry.addProperty(
+            "variant_source",
+            generated ? "gt_material_api" : itemCreative ? "creative" : "damage_0_probe");
+        if (!generated && stack.hasTagCompound()) entry.addProperty(
             "nbt",
             stack.getTagCompound()
                 .toString());
@@ -187,14 +211,24 @@ final class ExportJob {
                 entry.addProperty("block_registry_name", Block.blockRegistry.getNameForObject(itemBlock));
                 entry.addProperty("block_metadata", item.getMetadata(stack.getItemDamage()));
             }
-            int passes = item.requiresMultipleRenderPasses() ? item.getRenderPasses(stack.getItemDamage()) : 1;
-            for (int pass = 0; pass < passes; pass++) {
-                IIcon icon = item.getIcon(stack, pass);
-                if (icon == null) throw new IllegalStateException("Missing item icon pass " + pass);
+            boolean inventoryRenderer = net.minecraftforge.client.MinecraftForgeClient
+                .getItemRenderer(stack, net.minecraftforge.client.IItemRenderer.ItemRenderType.INVENTORY) != null;
+            if (inventoryRenderer) {
                 JsonObject layer = new JsonObject();
-                layer.add("texture", captureTexture(icon, stack.getItemSpriteNumber()));
-                layer.addProperty("tint", item.getColorFromItemStack(stack, pass) & 0xffffff);
+                layer.add("texture", captureInventory(stack));
+                layer.addProperty("tint", 0xffffff);
                 layers.add(layer);
+                entry.addProperty("inventory_frame", true);
+            } else {
+                int passes = item.requiresMultipleRenderPasses() ? item.getRenderPasses(stack.getItemDamage()) : 1;
+                for (int pass = 0; pass < passes; pass++) {
+                    IIcon icon = item.getIcon(stack, pass);
+                    if (icon == null) throw new IllegalStateException("Missing item icon pass " + pass);
+                    JsonObject layer = new JsonObject();
+                    layer.add("texture", captureTexture(icon, stack.getItemSpriteNumber()));
+                    layer.addProperty("tint", item.getColorFromItemStack(stack, pass) & 0xffffff);
+                    layers.add(layer);
+                }
             }
             entry.addProperty("status", "captured");
         } catch (RuntimeException | LinkageError exception) {
@@ -202,11 +236,64 @@ final class ExportJob {
             entry.addProperty("error", exception.toString());
             recordError(name, stack.getItemDamage(), "item_icon", exception);
         }
+        if (!generated) try {
+            JsonArray searchText = new JsonArray();
+            for (String line : stack.getTooltip(Minecraft.getMinecraft().thePlayer, false)) {
+                searchText
+                    .add(new JsonPrimitive(net.minecraft.util.EnumChatFormatting.getTextWithoutFormattingCodes(line)));
+            }
+            entry.add("search_text", searchText);
+        } catch (RuntimeException | LinkageError exception) {
+            entry.addProperty("tooltip_error", exception.toString());
+            recordError(name, stack.getItemDamage(), "item_tooltip", exception);
+        }
+        if (toolVariants != null) {
+            try {
+                JsonArray materialNames = new JsonArray();
+                for (String value : toolVariants.names(stack)) materialNames.add(new JsonPrimitive(value));
+                entry.add("material_names", materialNames);
+            } catch (ReflectiveOperationException exception) {
+                recordError(name, stack.getItemDamage(), "gt_material_names", exception);
+            }
+        }
         items.add(entry);
-        if (++variantCursor == itemVariants.size()) {
+        if (++variantCursor >= itemVariants.size() && (toolVariants == null || !toolVariants.hasNext())) {
             itemCursor++;
             itemVariants = null;
+            toolVariants = null;
         }
+    }
+
+    /** Content-address rendered snapshots so numeric-only NBT variants do not duplicate PNG data. */
+    private JsonObject captureInventory(ItemStack stack) throws IOException {
+        BufferedImage image = inventoryCapture.capture(stack);
+        java.nio.ByteBuffer.wrap(inventoryHashPixels)
+            .asIntBuffer()
+            .put(
+                ((java.awt.image.DataBufferInt) image.getRaster()
+                    .getDataBuffer()).getData());
+        String hash = com.google.common.hash.Hashing.sha256()
+            .hashBytes(inventoryHashPixels)
+            .toString();
+        String key = "inventory:" + hash;
+        JsonObject cached = textureCache.get(key);
+        if (cached != null) return cached;
+        // Only a new appearance pays the PNG encoder and ZIP write cost.
+        ByteArrayOutputStream png = new ByteArrayOutputStream();
+        ImageIO.write(image, "PNG", png);
+        byte[] data = png.toByteArray();
+        String path = "textures/" + textureCache.size() + ".png";
+        writeEntry(path, data);
+        JsonObject result = new JsonObject();
+        result.addProperty("path", path);
+        result.addProperty("icon_name", "skinstatue:inventory/" + hash);
+        result.addProperty("width", image.getWidth());
+        result.addProperty("height", image.getHeight());
+        result.addProperty("animated", false);
+        result.addProperty("sprite_class", "inventory_renderer_snapshot");
+        result.addProperty("pixel_source", "client_inventory_frame");
+        textureCache.put(key, result);
+        return result;
     }
 
     /** Record every registry entry, with creative-list metadata distinguished from probed states. */
@@ -564,7 +651,7 @@ final class ExportJob {
         JsonObject root = new JsonObject();
         root.addProperty("format", "skin-statue-block-index");
         root.addProperty("schema_version", 1);
-        root.addProperty("exporter_version", "0.1.4");
+        root.addProperty("exporter_version", "0.1.5");
         root.addProperty("minecraft_version", "1.7.10");
         root.addProperty("language", Minecraft.getMinecraft().gameSettings.language);
         root.addProperty("capture_scope", "static_getIcon_resolved_atlas");
@@ -620,6 +707,7 @@ final class ExportJob {
 
     /** Release only the GL object created by this exporter. */
     private void closeFramebuffer() {
+        inventoryCapture.close();
         if (readFramebuffer >= 0) {
             GL30.glDeleteFramebuffers(readFramebuffer);
             readFramebuffer = -1;
@@ -635,6 +723,10 @@ final class ExportJob {
             + itemCursor
             + "/"
             + itemNames.size()
+            + (itemVariants == null ? ""
+                : "; variant " + variantCursor
+                    + "/"
+                    + (itemVariants.size() + (toolVariants == null ? 0 : toolVariants.total())))
             + "; textures "
             + textureCache.size();
     }

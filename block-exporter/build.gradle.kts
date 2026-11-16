@@ -2,7 +2,7 @@ plugins {
     id("com.gtnewhorizons.gtnhconvention")
 }
 
-version = "0.1.4"
+version = "0.1.5"
 
 extensions.configure<com.gtnewhorizons.retrofuturagradle.MinecraftExtension>("minecraft") {
     jvmLanguageVersion.set(JavaLanguageVersion.of(25))

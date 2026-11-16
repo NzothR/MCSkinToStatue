@@ -11,7 +11,8 @@ import numpy as np
 
 from skin_statue.core.building import classify
 from skin_statue.core.connected_preview import preview_mesh
-from skin_statue.core.palette import FACES, Palette, analyze_texture, matching_cost, rgb_to_lab
+from skin_statue.core.item_images import group_appearances
+from skin_statue.core.palette import FACES, Palette, matching_cost, rgb_to_lab
 from skin_statue.core.skin import parse_skin
 from skin_statue.core.statue import GeneratedStatue
 
@@ -158,6 +159,7 @@ def replace_material(
 
 def project_bytes(statue: GeneratedStatue, palette: Palette) -> bytes:
     """保存实际编辑结果、皮肤及可用候选的全部纹理，工程无需依赖原索引。"""
+    items = list(palette.items)
     entries = {e["key"]: e for e in palette.candidates(True, set())}
     entries.update({e["key"]: e for e in statue.states})
     textures = {face["texture_id"] for e in entries.values() for face in e["faces"].values()}
@@ -167,7 +169,7 @@ def project_bytes(statue: GeneratedStatue, palette: Palette) -> bytes:
         for face in e["faces"].values()
         if face.get("ctm_texture_id")
     )
-    textures.update(layer["texture_id"] for item in palette.items for layer in item["layers"])
+    textures.update(layer["texture_id"] for item in items for layer in item["layers"])
     manifest = {
         "format": "skin-statue-project",
         "schema_version": 1,
@@ -184,7 +186,8 @@ def project_bytes(statue: GeneratedStatue, palette: Palette) -> bytes:
             "registry_count": palette.registry_count,
             "building_rules": palette.building_rules,
             "entries": list(entries.values()),
-            "items": palette.items,
+            "items": items,
+            "item_catalog_complete": palette.item_loading["complete"],
         },
     }
     output = BytesIO()
@@ -215,6 +218,7 @@ def open_project(data: bytes) -> tuple[GeneratedStatue, Palette]:
             for entry in palette.entries:
                 entry.update(classify(entry, palette.building_rules))
             palette.items = info.get("items", [])
+            palette.item_loading["complete"] = info.get("item_catalog_complete", True)
             palette.context = info["context"]
             palette.registry_count = info["registry_count"]
             by_key = {e["key"]: e for e in palette.entries}
@@ -234,8 +238,7 @@ def open_project(data: bytes) -> tuple[GeneratedStatue, Palette]:
             palette.stats = {
                 f["texture_id"]: f for e in palette.entries for f in e["faces"].values()
             }
-            for key in texture_ids - palette.stats.keys():
-                palette.stats[key] = {"texture_id": key, **analyze_texture(palette.textures[key])}
+            group_appearances(palette)
             shape = root["shape"]
             if (
                 len(shape) != 3

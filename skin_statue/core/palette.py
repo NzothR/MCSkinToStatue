@@ -162,6 +162,14 @@ class Palette:
         self.registry_count = 0
         self.context = {}
         self.items = []
+        self.item_images = {}
+        self.item_loading = {
+            "active": False,
+            "processed": 0,
+            "total": 0,
+            "error": None,
+            "complete": True,
+        }
         self._connected_profiles = {}
         self.building_rules = DEFAULT_PDIM
 
@@ -226,11 +234,17 @@ class Palette:
     def texture(self, data: bytes) -> dict:
         """按 PNG 内容去重；颜色分析与缩略图共用同一纹理。"""
         key = hashlib.sha256(data).hexdigest()[:24]
-        if key not in self.textures:
+        if key not in self.stats:
             stats = analyze_texture(data)
             self.textures[key] = data
             self.stats[key] = {"texture_id": key, **stats}
         return self.stats[key]
+
+    def item_texture(self, data: bytes) -> str:
+        """物品只需图像，不计算方块 Lab／接缝统计；需要时 texture() 仍可补齐。"""
+        key = hashlib.sha256(data).hexdigest()[:24]
+        self.textures.setdefault(key, data)
+        return key
 
     def add_state(
         self, registry_name: str, numeric_id: int, state: dict, faces: dict, reasons: list

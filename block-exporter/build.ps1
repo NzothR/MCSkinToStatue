@@ -10,7 +10,7 @@ Push-Location $PSScriptRoot
 try {
     & .\gradlew.bat --no-daemon assemble -x test
     if ($LASTEXITCODE -ne 0) { throw "Gradle build failed: $LASTEXITCODE" }
-    $artifact = Join-Path $PSScriptRoot 'build\libs\skinstatueindex-0.1.4.jar'
+    $artifact = Join-Path $PSScriptRoot 'build\libs\skinstatueindex-0.1.5.jar'
     $outputDirectory = Join-Path $PSScriptRoot '..\output'
     New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
     Copy-Item -LiteralPath $artifact -Destination $outputDirectory

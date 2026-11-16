@@ -4,7 +4,6 @@ import base64
 import json
 from io import BytesIO
 
-import numpy as np
 from PIL import Image
 
 from skin_statue.core.skin import png_url
@@ -14,23 +13,12 @@ def runtime_item(palette, entry):
     """合成真实创造栏变体的多层图标及逐层染色，并保留自定义渲染提示。"""
     if entry["status"] != "captured" or not entry["layers"]:
         raise ValueError(entry.get("error") or "该物品图标尚未捕获。")
-    result = Image.new("RGBA", (32, 32))
-    for layer in entry["layers"]:
-        with Image.open(BytesIO(palette.textures[layer["texture_id"]])) as source:
-            image = source.convert("RGBA").resize((32, 32), Image.Resampling.NEAREST)
-        pixels = np.array(image)
-        tint = layer["tint"]
-        pixels[..., :3] = (
-            pixels[..., :3].astype(np.uint16)
-            * np.array([(tint >> 16) & 255, (tint >> 8) & 255, tint & 255], dtype=np.uint16)
-            // 255
-        ).astype(np.uint8)
-        result = Image.alpha_composite(result, Image.fromarray(pixels))
     data = {
         "id": entry["key"],
         "label": entry.get("display_name") or entry["registry_name"],
         "kind": entry["render_kind"],
-        "image": png_url(result),
+        "image": "data:image/png;base64,"
+        + base64.b64encode(palette.item_images[entry["key"]]).decode("ascii"),
         "rotate_around": entry.get("rotate_around", False),
         "custom_renderer": entry.get("custom_equipped_renderer", False),
     }

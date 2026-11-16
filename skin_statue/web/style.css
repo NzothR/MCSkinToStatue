@@ -213,3 +213,11 @@ h1 { font-size: 22px; font-weight: 450; letter-spacing: 2px; margin: 8px 0 0; }
 .cape-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
 .cape-actions #cape-edit { grid-column: 1 / -1; }
 .cape-actions button { width: 100%; min-width: 0; padding: 10px 6px; white-space: normal; }
+.item-results { display: grid; gap: 8px; margin-top: 12px; max-height: 440px; overflow-y: auto; }
+.item-result { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; text-align: left; padding: 9px; }
+.item-result img { width: 40px; height: 40px; flex-shrink: 0; object-fit: contain; image-rendering: pixelated; }
+.item-result span { overflow-wrap: anywhere; font-size: 11px; }
+.item-result small { display: block; margin-top: 4px; color: var(--muted); }
+.item-result.active { border-color: var(--accent); background: #28443a; }
+.held-hand-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.held-hand-heading label { display: flex; align-items: center; gap: 6px; margin: 0; }

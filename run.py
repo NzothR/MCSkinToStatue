@@ -52,7 +52,12 @@ def main() -> None:
         )
     )
     app.state.server = server
-    server.run()
+    try:
+        server.run()
+    finally:
+        from skin_statue.resources.item_catalog import stop_item_imports
+
+        stop_item_imports()
 
 
 if __name__ == "__main__":

@@ -68,7 +68,10 @@
         <button id="load-scene-resources" class="bundle-button">只读载入物品与连接纹理</button>
         <p id="scene-resource-status" class="hint" role="status">从实例加载实际资源包纹理，也可直接导入手持 PNG。</p>
         <form id="item-search-form"><input id="item-search" placeholder="搜索物品名字、注册名或 ID" aria-label="查找运行时物品"><button>查找物品</button></form>
+        <p class="hint">空格表示同时包含，!词用于排除名称或 ID。例如：调律源金 扳手，或 扳手 !顶。词语不必相邻。</p>
         <div class="candidate-navigation"><button id="items-prev" disabled>上一页物品</button><button id="items-next" disabled>下一页物品</button></div>
+        <div id="item-results" class="item-results" role="listbox" aria-label="物品搜索结果"></div>
+        <p id="selected-item-name" class="hint" role="status">先从列表选择物品，再勾选左右手。</p>
         <div id="held-controls"></div>
         <p class="hint">位移单位为皮肤像素，旋转单位为度；0 厚度显示薄片，生成至少一格。操作只更新皮肤预览，重新生成后才应用到雕像。</p>
       </section>
