@@ -3,7 +3,7 @@ import * as THREE from "three";
 const $ = (selector) => document.querySelector(selector);
 const PAGE = 12;
 
-/** 点击拾取与整类编辑共享服务端真实体素；候选序列在一次选中期间保持稳定。 */
+/** 点击拾取与固定分组编辑共享服务端真实体素；候选序列在一次选中期间保持稳定。 */
 export function initEditor(host) {
   let selected = null;
   let choices = [];
@@ -48,7 +48,7 @@ export function initEditor(host) {
   function showSelection() {
     if (!selected) return;
     const e = selected.entry;
-    $("#selection-info").textContent = `${e.display_name || "本地化名称需重新导出索引（辅助模组 0.1.2）"}\n${e.registry_name} · ID ${e.numeric_id}:${e.metadata}\n同类 ${selected.count.toLocaleString()} 块 · 局部坐标 ${selected.position.join(", ")}`;
+    $("#selection-info").textContent = `${e.display_name || "本地化名称需重新导出索引（辅助模组 0.1.2）"}\n${e.registry_name} · ID ${e.numeric_id}:${e.metadata}\n固定分组 ${selected.count.toLocaleString()} 块 · 原始材料 ${selected.origin}\n局部坐标 ${selected.position.join(", ")}`;
     $("#edit-tools").hidden = false;
     const data = host.state().data;
     const min = new THREE.Vector3(...selected.position.map((p, i) => (p + data.bounds[0][i]) / data.scale));
@@ -56,7 +56,7 @@ export function initEditor(host) {
     highlight.visible = host.state().mode === "statue";
   }
 
-  /** 每张卡片显示实际纹理和精确状态，点击即整类替换。 */
+  /** 每张卡片显示实际纹理和精确状态，点击即替换当前原始分组。 */
   function card(entry, cost) {
     const button = document.createElement("button");
     button.type = "button";
@@ -138,14 +138,14 @@ export function initEditor(host) {
       searchPage = 0;
       searchTotal = 0;
       $("#replacement-page").textContent = "";
-      const list = await json(`/api/statue/${data.statue_id}/candidates?${new URLSearchParams({ key: result.entry.key })}`);
+      const list = await json(`/api/statue/${data.statue_id}/candidates?${new URLSearchParams({ key: result.entry.key, group: result.group })}`);
       if (token !== sequence) return;
       choices = list.candidates;
       $("#edit-tools").hidden = false;
       const index = choices.findIndex((row) => row.entry.key === selected.entry.key);
       page = Math.floor(Math.max(0, index) / PAGE);
       renderChoices();
-      $("#edit-status").textContent = "点击候选即可替换该类全部方块。";
+      $("#edit-status").textContent = "点击候选只替换该原始分组，其他同材质分组保持独立。";
     } catch (error) { if (token === sequence) $("#edit-status").textContent = error.message; }
   }
 
@@ -160,7 +160,7 @@ export function initEditor(host) {
     try {
       const result = await json(`/api/statue/${data.statue_id}/replace`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source: selected.entry.key, target: entry.key }),
+        body: JSON.stringify({ source: selected.entry.key, target: entry.key, group: selected.group }),
       });
       await host.display(result);
       history = history.slice(0, historyIndex + 1);
@@ -168,7 +168,6 @@ export function initEditor(host) {
       if (history.length > 20) history.shift();
       historyIndex = history.length - 1;
       selected.entry = entry;
-      selected.count = result.materials.find((m) => m.key === entry.key).count;
       showSelection();
       const index = choices.findIndex((row) => row.entry.key === entry.key);
       if (index >= 0) page = Math.floor(index / PAGE);

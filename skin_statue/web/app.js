@@ -179,6 +179,9 @@ async function displayStatue(result) {
   $("#statue-state").textContent = result.edits?.length ? `已编辑 ${result.edits.length} 次` : "生成完成";
   $("#statue-report").hidden = false;
   $("#statue-statistics").textContent = `站立高度基准 ${result.base_height} 格；实际包围尺寸 ${result.dimensions.join(" × ")} 格\n${result.options.hollow ? "空心" : "实心"} · 方块 ${result.block_count.toLocaleString()} · 第二层 ${result.overlay_blocks.toLocaleString()}\n可见单格面 ${result.mesh.exposed_faces.toLocaleString()} → 合并矩形 ${result.mesh.quad_count.toLocaleString()}\n初次生成平均 / 最大 Lab 色差 ${result.matching.mean_color_error} / ${result.matching.max_color_error}；内部填充 ${result.matching.interior_block}`;
+  if (result.matching.method === "border-grain-ctm-v2") {
+    $("#statue-statistics").textContent += `\n匹配已考虑边框与颗粒；可用连接图材料 ${result.matching.ctm_available} 种，初次选用 ${result.matching.ctm_selected} 种`;
+  }
   $("#statue-materials").replaceChildren(...result.materials.map((material) => {
     const row = document.createElement("div");
     row.textContent = `${material.display_name ? material.display_name + " · " : ""}${material.key} · ID ${material.numeric_id} · ${material.count.toLocaleString()} 块`;
@@ -186,7 +189,10 @@ async function displayStatue(result) {
   }));
   showMode("statue");
   $("#ctm-preview-status").textContent = !result.ctm?.enabled ? "连接纹理预览已关闭。" : `连接纹理：${result.ctm.connected_faces.toLocaleString()} 个暴露面。${result.ctm.unsupported_materials.length ? `${result.ctm.unsupported_materials.length} 种材料缺少支持的连接图，显示基础纹理；可从实例载入 CTM 资源。` : ""}`;
-  showNotice("");
+  const notices = [];
+  if (result.options.prefer_connected && result.matching.ctm_available === 0) notices.push("尚未加载可用连接图；请从相同资源包的客户端实例载入连接纹理后重新生成，以按连接效果选材。");
+  if (result.legacy_groups) notices.push("旧工程按打开时的材质建立固定分组；此前已合并的范围需要重新生成才能恢复原始分组。");
+  showNotice(notices.join(" "));
 }
 
 /** 切换仅影响当前网格的纹理，不重新匹配材料或修改体素快照。 */

@@ -1,4 +1,4 @@
-"""整类材料编辑、原色候选排序和可独立恢复的工程 ZIP。"""
+"""固定原始分组编辑、原色候选排序和可独立恢复的工程 ZIP。"""
 
 import copy
 import hashlib
@@ -10,7 +10,7 @@ from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 import numpy as np
 
 from skin_statue.core.connected_preview import preview_mesh
-from skin_statue.core.palette import FACES, Palette, analyze_texture, rgb_to_lab
+from skin_statue.core.palette import FACES, Palette, analyze_texture, matching_cost, rgb_to_lab
 from skin_statue.core.skin import parse_skin
 from skin_statue.core.statue import GeneratedStatue
 
@@ -51,22 +51,34 @@ def block_at(statue: GeneratedStatue, position: tuple[int, int, int]) -> dict:
     if index < 0:
         raise ValueError("所选位置是空气。")
     entry = statue.states[index]
-    count = next(m["count"] for m in statue.preview["materials"] if m["key"] == entry["key"])
+    group = int(statue.group_indices[position])
+    count = int(np.count_nonzero(statue.group_indices == group))
     LOGGER.debug("Selected voxel: position=%s key=%s count=%s", position, entry["key"], count)
-    return {"entry": entry, "count": count, "position": position}
+    return {
+        "entry": entry,
+        "count": count,
+        "position": position,
+        "group": group,
+        "origin": statue.states[group]["key"],
+    }
 
 
-def ranked_candidates(statue: GeneratedStatue, palette: Palette, key: str) -> list[dict]:
-    """用这类材料原先覆盖的皮肤颜色共同评分；排序固定后供前端来回切换。"""
+def ranked_candidates(
+    statue: GeneratedStatue, palette: Palette, key: str, group: int
+) -> list[dict]:
+    """用固定原始分组的皮肤颜色评分，替换后的同材质分组彼此独立。"""
     source = next((e for e in statue.states if e["key"] == key), None)
     if source is None or not any(m["key"] == key for m in statue.preview["materials"]):
         raise ValueError("雕像中没有该材料。")
+    if not 0 <= group < len(statue.states) or not np.any(statue.group_indices == group):
+        raise ValueError("替换分组不存在。")
     options = statue.preview["options"]
     entries = palette.candidates(options["prefer_connected"], options["excluded"])
-    labs = np.array([[e["faces"][f]["lab"] for f in FACES] for e in entries])
-    noise = np.sqrt([[e["faces"][f]["variance"] for f in FACES] for e in entries]) / 2.55
-    scores = np.zeros(len(entries))
-    samples = statue.match_targets.get(key)
+    labs, penalty, connection = palette.matching_profiles(entries, options["prefer_connected"])
+    raw = np.zeros(len(entries))
+    texture_penalty = np.zeros(len(entries))
+    connection_strength = np.zeros(len(entries))
+    samples = statue.match_targets.get(statue.states[group]["key"])
     if samples:
         total = sum(count for _, count in samples)
         for signature, count in samples:
@@ -74,17 +86,24 @@ def ranked_candidates(statue: GeneratedStatue, palette: Palette, key: str) -> li
             target = np.array([rgb_to_lab(row) for row in colors])
             weights = (int(signature[18]) >> np.arange(6)) & 1
             delta = np.linalg.norm(labs - target, axis=2)
-            scores += ((delta + options["smoothness"] * noise) * weights).sum(axis=1) * (
-                count / (total * weights.sum())
-            )
+            weight = count / (total * weights.sum())
+            raw += (delta * weights).sum(axis=1) * weight
+            texture_penalty += (penalty * weights).sum(axis=1) * weight
+            connection_strength += (connection * weights).sum(axis=1) * weight
     else:
-        # 仅内部填充材料没有皮肤表面目标，按其六面颜色排列替代项。
-        target = np.array([source["faces"][f]["lab"] for f in FACES])
-        scores = (np.linalg.norm(labs - target, axis=2) + options["smoothness"] * noise).mean(
-            axis=1
-        )
-    if options["prefer_connected"]:
-        scores -= np.array([3 if e["connected_texture"] else 0 for e in entries])
+        # 仅内部填充材料没有皮肤表面目标，按其原始六面颜色排列替代项。
+        original = statue.states[group]
+        target = np.array([original["faces"][f]["lab"] for f in FACES])
+        raw = np.linalg.norm(labs - target, axis=2).mean(axis=1)
+        texture_penalty = penalty.mean(axis=1)
+        connection_strength = connection.mean(axis=1)
+    scores = matching_cost(
+        raw,
+        texture_penalty,
+        connection_strength,
+        options["smoothness"],
+        options["prefer_connected"],
+    )
     return [
         {"entry": entries[int(i)], "cost": round(float(scores[i]), 3)}
         for i in np.argsort(scores, kind="stable")
@@ -92,12 +111,15 @@ def ranked_candidates(statue: GeneratedStatue, palette: Palette, key: str) -> li
 
 
 def replace_material(
-    statue: GeneratedStatue, palette: Palette, source: str, target: str
+    statue: GeneratedStatue, palette: Palette, source: str, target: str, group: int
 ) -> GeneratedStatue:
-    """复制体素快照并替换同 registry+metadata 的全部方块，原快照可撤销恢复。"""
+    """仅替换生成时确定的原始分组，当前材质相同的其他组保持不变。"""
     source_index = next((i for i, e in enumerate(statue.states) if e["key"] == source), None)
     if source_index is None or not np.any(statue.state_indices == source_index):
         raise ValueError("雕像中没有待替换的材料。")
+    mask = statue.group_indices == group
+    if not mask.any() or not np.all(statue.state_indices[mask] == source_index):
+        raise ValueError("所选分组的材质已改变，请重新点击选择。")
     options = statue.preview["options"]
     destination = next(
         (
@@ -114,16 +136,18 @@ def replace_material(
     if target_index == len(states):
         states.append(destination)
     blocks = statue.state_indices.copy()
-    count = int(np.count_nonzero(blocks == source_index))
-    blocks[blocks == source_index] = target_index
-    targets = copy.deepcopy(statue.match_targets)
+    count = int(np.count_nonzero(mask))
+    blocks[mask] = target_index
     preview = {k: copy.deepcopy(v) for k, v in statue.preview.items() if k not in ("mesh", "atlas")}
     if source != target:
-        targets.setdefault(target, []).extend(targets.pop(source, []))
-        preview.setdefault("edits", []).append({"source": source, "target": target, "count": count})
-    result = GeneratedStatue(preview, blocks, states, statue.normalized_skin, targets)
+        preview.setdefault("edits", []).append(
+            {"source": source, "target": target, "count": count, "group": group}
+        )
+    result = GeneratedStatue(
+        preview, blocks, states, statue.normalized_skin, statue.match_targets, statue.group_indices
+    )
     rebuild(result, palette)
-    LOGGER.debug("Material replacement: %s -> %s, count=%s", source, target, count)
+    LOGGER.debug("Material replacement: group=%s %s -> %s, count=%s", group, source, target, count)
     return result
 
 
@@ -161,6 +185,7 @@ def project_bytes(statue: GeneratedStatue, palette: Palette) -> bytes:
     with ZipFile(output, "w", ZIP_DEFLATED, compresslevel=6) as archive:
         archive.writestr("project.json", json.dumps(manifest, ensure_ascii=False))
         archive.writestr("blocks.i32", statue.state_indices.astype("<i4").tobytes())
+        archive.writestr("groups.i32", statue.group_indices.astype("<i4").tobytes())
         archive.writestr("skin.png", statue.normalized_skin)
         for key in sorted(textures):
             archive.writestr(f"textures/{key}.png", palette.textures[key])
@@ -212,7 +237,20 @@ def open_project(data: bytes) -> tuple[GeneratedStatue, Palette]:
             blocks = np.frombuffer(archive.read("blocks.i32"), dtype="<i4").reshape(shape).copy()
             if blocks.min() < -1 or blocks.max() >= len(states) or not np.any(blocks >= 0):
                 raise ValueError("工程体素引用了无效的材料。")
+            groups = (
+                np.frombuffer(archive.read("groups.i32"), dtype="<i4").reshape(shape).copy()
+                if "groups.i32" in archive.namelist()
+                else blocks.copy()
+            )
+            if (
+                groups.min() < -1
+                or groups.max() >= len(states)
+                or not np.array_equal(groups >= 0, blocks >= 0)
+            ):
+                raise ValueError("工程替换分组与体素不符。")
             preview = root["preview"]
+            if "groups.i32" not in archive.namelist():
+                preview["legacy_groups"] = True
             if preview["dimensions"] != shape or any(
                 high - low != size
                 for low, high, size in zip(*preview["bounds"], shape, strict=True)
@@ -221,7 +259,7 @@ def open_project(data: bytes) -> tuple[GeneratedStatue, Palette]:
             preview["palette_id"] = palette.id
             parse_skin(archive.read("skin.png"), preview["source"]["model"])
             statue = GeneratedStatue(
-                preview, blocks, states, archive.read("skin.png"), root["match_targets"]
+                preview, blocks, states, archive.read("skin.png"), root["match_targets"], groups
             )
             LOGGER.debug(
                 "Opened project: dimensions=%s materials=%s", shape, len(preview["materials"])

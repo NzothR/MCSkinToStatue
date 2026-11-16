@@ -9,7 +9,7 @@ from math import ceil, sqrt
 import numpy as np
 from PIL import Image
 
-from skin_statue.core.palette import FACES, Palette, rgb_to_lab
+from skin_statue.core.palette import FACES, Palette, matching_cost, rgb_to_lab
 from skin_statue.core.posed_voxels import posed_voxels
 from skin_statue.core.skin import png_url
 
@@ -28,6 +28,8 @@ class GeneratedStatue:
     normalized_skin: bytes
     # 每种材料对应的原皮肤颜色签名及频次，用于编辑时重新排列候选。
     match_targets: dict
+    # 生成时的材质槽位固定为替换分组；后续材质相同也不会合并范围。
+    group_indices: np.ndarray
 
 
 def exposure(occupied: np.ndarray, axis: int, sign: int) -> np.ndarray:
@@ -94,26 +96,8 @@ def match_surface(occupied, targets, palette, options):
         (colors.reshape(-1, 18), np.packbits(flags, axis=1, bitorder="little")), axis=1
     )
     unique, inverse = np.unique(signatures, axis=0, return_inverse=True)
-    labs = np.array(
-        [[entry["faces"][f]["lab"] for f in FACES] for entry in candidates], dtype=np.float32
-    )
-    noise = (
-        np.sqrt(
-            np.array(
-                [[entry["faces"][f]["variance"] for f in FACES] for entry in candidates],
-                dtype=np.float32,
-            )
-        )
-        / 2.55
-    )
+    labs, penalty, connection = palette.matching_profiles(candidates, options["prefer_connected"])
     selected = np.empty(len(unique), dtype=np.int32)
-    connection_bonus = np.array(
-        [
-            3 if options["prefer_connected"] and entry["connected_texture"] else 0
-            for entry in candidates
-        ],
-        dtype=np.float32,
-    )
     errors = np.empty(len(unique), dtype=np.float32)
     maxima = np.empty(len(unique), dtype=np.float32)
     for index, signature in enumerate(unique):
@@ -122,8 +106,14 @@ def match_surface(occupied, targets, palette, options):
         )
         weights = ((int(signature[18]) >> np.arange(6)) & 1).astype(np.float32)
         delta = np.sqrt(((labs - target) ** 2).sum(axis=2))
-        costs = ((delta + options["smoothness"] * noise) * weights).sum(axis=1) / weights.sum()
-        costs -= connection_bonus
+        raw = (delta * weights).sum(axis=1) / weights.sum()
+        costs = matching_cost(
+            raw,
+            (penalty * weights).sum(axis=1) / weights.sum(),
+            (connection * weights).sum(axis=1) / weights.sum(),
+            options["smoothness"],
+            options["prefer_connected"],
+        )
         best = int(costs.argmin())
         selected[index] = best
         errors[index] = (delta[best] * weights).sum() / weights.sum()
@@ -143,6 +133,14 @@ def match_surface(occupied, targets, palette, options):
         candidates,
         {
             "unique_color_groups": len(unique),
+            "method": "border-grain-ctm-v2",
+            "ctm_available": sum(
+                any(f.get("ctm_texture_id") for f in e["faces"].values()) for e in candidates
+            ),
+            "ctm_selected": sum(
+                any(f.get("ctm_texture_id") for f in candidates[int(i)]["faces"].values())
+                for i in np.unique(selected)
+            ),
             "mean_color_error": round(float(errors[inverse].mean()), 3),
             "max_color_error": round(float(maxima.max()), 3),
             "interior_block": candidates[dominant]["key"],
@@ -380,4 +378,5 @@ def generate_statue(parsed: dict, palette: Palette, options: dict) -> GeneratedS
         candidates,
         base64.b64decode(parsed["images"]["normalized"].split(",", 1)[1]),
         material_targets,
+        cropped.copy(),
     )

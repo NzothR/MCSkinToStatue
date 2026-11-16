@@ -129,10 +129,11 @@ async def render_statue(identity: str, connected: bool = True) -> dict:
 
 
 class Replacement(BaseModel):
-    """整类替换按注册名和 Metadata 精确指定源与目标。"""
+    """按固定生成分组及当前状态精确指定替换范围。"""
 
     source: str
     target: str
+    group: int = Field(ge=0)
 
 
 class UsernameRequest(BaseModel):
@@ -179,16 +180,16 @@ def snapshot(identity: str) -> dict:
 
 @app.get("/api/statue/{identity}/block")
 def selected_block(identity: str, x: int, y: int, z: int) -> dict:
-    """查询点击位置的实际方块状态及该类方块总数。"""
+    """查询点击位置的实际方块状态、原始分组及其数量。"""
     return block_at(get_statue(identity), (x, y, z))
 
 
 @app.get("/api/statue/{identity}/candidates")
-async def candidates(identity: str, key: str) -> dict:
+async def candidates(identity: str, key: str, group: int = Query(ge=0)) -> dict:
     """返回完整稳定排序的轻量候选表，浏览器按批显示且不随切换重新排序。"""
     statue = get_statue(identity)
     rows = await run_in_threadpool(
-        ranked_candidates, statue, get_palette(statue.preview["palette_id"]), key
+        ranked_candidates, statue, get_palette(statue.preview["palette_id"]), key, group
     )
     return {
         "candidates": [
@@ -224,6 +225,7 @@ async def replace(identity: str, request: Replacement) -> dict:
         get_palette(statue.preview["palette_id"]),
         request.source,
         request.target,
+        request.group,
     )
     return remember(result)
 

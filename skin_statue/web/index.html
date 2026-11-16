@@ -133,7 +133,7 @@
         <div class="resources-heading"><h2>方块编辑</h2><div><button id="edit-undo" disabled>撤销</button><button id="edit-redo" disabled>重做</button></div></div>
         <p id="selection-info" class="hint" role="status">切到方块雕像，单击方块查看名称、ID 和替换候选。拖动仍用于旋转。</p>
         <div id="edit-tools" hidden>
-          <p class="hint">替换同一注册名及 Metadata 的全部方块。候选按原皮肤目标色排序，分数越低越接近。</p>
+          <p class="hint">只替换生成时的原始材料分组，多次换材质后范围仍保持独立。候选综合原皮肤色差、边框、颗粒和平滑偏好排序。</p>
           <div class="candidate-navigation"><button id="candidate-prev">← 上一个候选</button><span id="candidate-index"></span><button id="candidate-next">下一个候选 →</button></div>
           <div id="candidate-list" class="candidate-list"></div>
           <div class="candidate-navigation"><button id="candidate-page-prev">上一批</button><span id="candidate-page"></span><button id="candidate-page-next">下一批</button></div>

@@ -5,6 +5,7 @@ from collections import Counter
 from io import BytesIO
 from math import sqrt
 
+import numpy as np
 from PIL import Image, ImageStat, UnidentifiedImageError
 
 FACES = ("east", "west", "up", "down", "south", "north")
@@ -31,6 +32,11 @@ def analyze_texture(data: bytes) -> dict:
             image = source.convert("RGBA")
     except (UnidentifiedImageError, OSError) as exc:
         raise ValueError("无法读取索引中的 PNG 纹理。") from exc
+    return analyze_image(image)
+
+
+def analyze_image(image: Image.Image) -> dict:
+    """比较边带与中心色，并在统一 16×16 尺度测量颗粒，避免高分辨率偏差。"""
     alpha = image.getchannel("A")
     histogram = alpha.histogram()
     total = image.width * image.height
@@ -38,15 +44,47 @@ def analyze_texture(data: bytes) -> dict:
     # 忽略完全透明像素中的 RGB，默认候选进一步要求所有像素不透明。
     stats = ImageStat.Stat(image.convert("RGB"), alpha)
     rgb = [round(v, 3) for v in stats.mean] if visible else [0.0, 0.0, 0.0]
+    pixels = np.asarray(image.resize((16, 16), Image.Resampling.BOX), dtype=np.float32)
+    border = np.ones((16, 16), dtype=bool)
+    border[2:-2, 2:-2] = False
+
+    def mean(mask):
+        weights = pixels[..., 3][mask]
+        return (
+            np.average(pixels[..., :3][mask], axis=0, weights=weights)
+            if weights.sum()
+            else np.zeros(3)
+        )
+
+    border_contrast = np.linalg.norm(np.array(rgb_to_lab(mean(border))) - rgb_to_lab(mean(~border)))
+    # 只统计两端都可见的相邻像素，透明区域不制造假边缘。
+    gradients = []
+    for axis in (0, 1):
+        difference = np.abs(np.diff(pixels[..., :3], axis=axis)).mean(axis=2)
+        valid = np.minimum(
+            np.take(pixels[..., 3], range(15), axis=axis),
+            np.take(pixels[..., 3], range(1, 16), axis=axis),
+        )
+        gradients.append(float(np.average(difference, weights=valid)) if valid.sum() else 0)
     return {
         "width": image.width,
         "height": image.height,
         "rgb": rgb,
         "lab": [round(v, 5) for v in rgb_to_lab(rgb)],
         "variance": round(sum(stats.var) / 3, 3) if visible else 0,
+        "border_contrast": round(float(border_contrast), 4),
+        "grain": round(sum(gradients) / 5.1, 4),
         "opaque": histogram[255] == total,
         "transparent_fraction": round((total - histogram[255]) / total, 6),
     }
+
+
+def matching_cost(raw, penalty, connection, smoothness: float, prefer_connected: bool):
+    """限定可牺牲色差，再以边框、颗粒和逐面连接能力排序；输入均为候选向量。"""
+    costs = raw + smoothness * penalty - (4 + 6 * smoothness) * connection
+    tolerance = 8 * smoothness + (4 if prefer_connected else 0)
+    # 超出颜色预算的候选仍可手选，但排在预算内候选之后。
+    return np.where(raw <= raw.min() + tolerance, costs, 1000 + raw)
 
 
 class Palette:
@@ -64,6 +102,51 @@ class Palette:
         self.registry_count = 0
         self.context = {}
         self.items = []
+        self._connected_profiles = {}
+
+    def face_profile(self, face: dict, prefer_connected: bool) -> tuple:
+        """缓存实际连接图的完整连接区域；缺图时仅给予较弱的声明偏好。"""
+        key = face["texture_id"]
+        base = self.stats[key]
+        if "border_contrast" not in base:
+            base = self.stats[key] = {"texture_id": key, **analyze_texture(self.textures[key])}
+        strength = 0.35 if prefer_connected and face.get("connected_texture") else 0
+        sheet = face.get("ctm_texture_id") if prefer_connected else None
+        if sheet:
+            pair = (key, sheet)
+            if pair not in self._connected_profiles:
+                from skin_statue.core.connected_preview import composite
+
+                with (
+                    Image.open(BytesIO(self.textures[key])) as original,
+                    Image.open(BytesIO(self.textures[sheet])) as connected,
+                ):
+                    interior = analyze_image(
+                        composite(original.convert("RGBA"), connected.convert("RGBA"), 255)
+                    )
+                # 主体平面以连接后的内部为主，保留边界的基础纹理影响。
+                blended = {
+                    k: 0.8 * interior[k] + 0.2 * base[k]
+                    for k in ("variance", "border_contrast", "grain")
+                }
+                rgb = 0.8 * np.array(interior["rgb"]) + 0.2 * np.array(base["rgb"])
+                self._connected_profiles[pair] = {**blended, "lab": rgb_to_lab(rgb)}
+            base = self._connected_profiles[pair]
+            strength = 1
+        penalty = (
+            2 * sqrt(base["variance"]) / 2.55 + 1.5 * base["border_contrast"] + 0.75 * base["grain"]
+        )
+        return base["lab"], penalty, strength
+
+    def matching_profiles(self, entries: list, prefer_connected: bool) -> tuple:
+        """一次准备 P×6 的颜色、平滑惩罚与连接权重，供所有目标颜色复用。"""
+        profiles = [
+            [self.face_profile(e["faces"][f], prefer_connected) for f in FACES] for e in entries
+        ]
+        return tuple(
+            np.asarray([[face[i] for face in entry] for entry in profiles], dtype=np.float32)
+            for i in range(3)
+        )
 
     def texture(self, data: bytes) -> dict:
         """按 PNG 内容去重；颜色分析与缩略图共用同一纹理。"""
@@ -162,20 +245,25 @@ class Palette:
         prefer_connected: bool = False,
     ) -> dict:
         """按指定朝向，用 Lab 欧氏距离与纹理起伏寻找静态候选；复杂度 O(P)。"""
-        target = rgb_to_lab(rgb)
+        target = np.asarray(rgb_to_lab(rgb))
         blocked = excluded or set()
         candidates = self.candidates(prefer_connected, blocked)
 
-        def cost(entry: dict) -> float:
-            color = entry["faces"][face]
-            delta = sqrt(sum((a - b) ** 2 for a, b in zip(target, color["lab"], strict=True)))
-            return (
-                delta
-                + smoothness * sqrt(color["variance"]) / 2.55
-                - (3 if prefer_connected and entry["connected_texture"] else 0)
-            )
-
-        result = min(candidates, key=cost, default=None)
-        if result is None:
+        if not candidates:
             raise ValueError("调色板没有可用的静态完整方块候选。")
-        return {"key": result["key"], "cost": round(cost(result), 4), "entry": result}
+        profiles = [self.face_profile(e["faces"][face], prefer_connected) for e in candidates]
+        labs = np.asarray([p[0] for p in profiles])
+        raw = np.linalg.norm(labs - target, axis=1)
+        costs = matching_cost(
+            raw,
+            np.array([p[1] for p in profiles]),
+            np.array([p[2] for p in profiles]),
+            smoothness,
+            prefer_connected,
+        )
+        best = int(costs.argmin())
+        return {
+            "key": candidates[best]["key"],
+            "cost": round(float(costs[best]), 4),
+            "entry": candidates[best],
+        }
