@@ -147,7 +147,7 @@ async function loadPage() {
 }
 
 /** 绑定实例扫描、索引上传、调色板查询及单色匹配。 */
-export function initResourcePanel() {
+export function initResourcePanel(matchingOptions) {
   window.addEventListener("project-palette-settings", (event) => {
     excluded.clear();
     for (const key of event.detail.excluded) excluded.add(key);
@@ -209,7 +209,7 @@ export function initResourcePanel() {
     if (!palette) return;
     const rgb = $("#match-color").value.match(/[a-f\d]{2}/gi).map((value) => parseInt(value, 16));
     try {
-      const result = await requestJSON(`/api/palettes/${palette.id}/match`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rgb, face: $("#match-face").value, excluded: [...excluded], prefer_connected: $("#statue-connected").checked }) });
+      const result = await requestJSON(`/api/palettes/${palette.id}/match`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rgb, face: $("#match-face").value, excluded: [...excluded], prefer_connected: $("#statue-connected").checked, ...matchingOptions() }) });
       $("#match-result").textContent = `${result.key} · 匹配代价 ${result.cost}`;
     } catch (error) { $("#match-result").textContent = error.message; }
   });

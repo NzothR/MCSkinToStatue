@@ -74,7 +74,9 @@ def ranked_candidates(
         raise ValueError("替换分组不存在。")
     options = statue.preview["options"]
     entries = palette.candidates(options["prefer_connected"], options["excluded"])
-    labs, penalty, connection = palette.matching_profiles(entries, options["prefer_connected"])
+    labs, penalty, connection = palette.matching_profiles(
+        entries, options["prefer_connected"], options.get("matching")
+    )
     raw = np.zeros(len(entries))
     texture_penalty = np.zeros(len(entries))
     connection_strength = np.zeros(len(entries))
@@ -103,6 +105,7 @@ def ranked_candidates(
         connection_strength,
         options["smoothness"],
         options["prefer_connected"],
+        options.get("matching"),
     )
     return [
         {"entry": entries[int(i)], "cost": round(float(scores[i]), 3)}

@@ -8,6 +8,68 @@ import { initPoseControls } from "/static/poses.js";
 import { initHeldEditor } from "/static/held-editor.js";
 
 const $ = (selector) => document.querySelector(selector);
+const matchingInputs = [...document.querySelectorAll(".matching-controls input")];
+const matchingDefaults = Object.fromEntries(matchingInputs.map((input) => [input.id.replace("matching-", ""), Number(input.defaultValue)]));
+
+/** 保存到生成参数，候选排序和工程恢复使用同一组权重。 */
+function matchingSettings() {
+  return Object.fromEntries(matchingInputs.map((input) => [input.id.replace("matching-", ""), Number(input.value)]));
+}
+
+/** 参数名称及输入框可悬浮查看含义。 */
+function initParameterHelp() {
+  const hints = {
+    "statue-scale": "站立皮肤原高为 32 像素。倍率越高，方块越多、轮廓越精细；实际高度也受姿势和外层影响。",
+    "statue-detail": "逐像素保留原始轮廓。2×2 或 4×4 会先平均颜色和透明度，减少细节，也可能削弱耳尖等小轮廓。",
+    "statue-hollow": "空心只保留主体外壳，节省方块；实心填满内部。第二层单独保留。",
+    "statue-thickness": "空心主体保留多少格厚的壳；仅在空心模式生效。越厚所需方块越多。",
+    "statue-offset": "第二层至少向外突出多少格。实际还会保留头部 0.5、其他部位 0.25 皮肤像素乘倍率的膨胀量。",
+    "statue-alpha": "透明度范围为 0～255，0 完全透明，255 完全不透明。达到此数值的外层像素才生成方块；降低会保留更多半透明细节，提高会过滤它们。",
+    "statue-smoothness": "控制平滑惩罚的总强度：颜色优先不惩罚花纹；平衡和均匀平滑优先会逐渐避开渐变、颗粒和接缝。下方可细调各项权重。",
+    "statue-connected": "允许安全的连接纹理方块参与匹配，并按偏好强度奖励。支持连接并不等于纯色，有花纹或接缝的材料仍会受到惩罚。",
+    "matching-uniformity": "越高越偏好单块内部颜色均匀的纹理，减少机械面板、对角渐变和大色斑。受上方匹配策略强度控制；0 关闭此项。",
+    "matching-border": "越高越排斥明显外框以及重复铺设时两侧边缘颜色不一致的接缝。受匹配策略强度控制；0 关闭此项。",
+    "matching-grain": "越高越排斥密集颗粒和细碎像素变化。受匹配策略强度控制；0 关闭此项。",
+    "matching-connection": "只在勾选优先连接纹理时生效。越高越偏好连接方块；连接后仍有渐变或接缝的材料奖励会减弱。0 关闭奖励，但仍允许这些候选参与。",
+    "matching-color_tolerance": "相对颜色最接近的候选，最多允许多出多少 Lab 色差来换取平滑效果。越大越容易选到平整材料，也越可能偏色；0 只允许最接近的颜色。",
+    "preview-connected": "只改变当前预览的纹理拼接，不重新选材。需要加载实例实际使用的连接图；可与关闭时对比。",
+    "statue-plain": "使用方块纹理的平均色显示，便于区分颜色匹配和纹理花纹问题；不改变导出方块。",
+    "flat-color": "关闭预览的方向明暗，按纹理原色显示；不改变方块或皮肤文件。",
+  };
+  for (const [id, text] of Object.entries(hints)) {
+    const input = $(`#${id}`);
+    input.title = text;
+    const label = input.closest("label");
+    if (label) {
+      label.title = text;
+      label.classList.add("parameter-help");
+    }
+  }
+  for (const hand of ["left", "right"]) {
+    for (const [field, text] of Object.entries({ scale: "整体等比例放大物品；不改变握持绑定。重新生成才应用到雕像。", thickness: "单位为皮肤像素。0 为双面薄片，体素化至少占一格；提高会把物品加厚。", kind: "决定游戏中的握持方式；立方体类型按六面方块生成，其他类型按图标生成。" })) {
+      const input = $(`#held-${hand}-${field}`);
+      input.title = text;
+      const label = input.closest("label");
+      if (label) { label.title = text; label.classList.add("parameter-help"); }
+    }
+  }
+  for (const row of document.querySelectorAll(".pose-angle-row")) {
+    const inputs = [...row.querySelectorAll("input")];
+    const first = inputs[0];
+    const text = first.hasAttribute("data-pose-part") ? "依次为 X、Y、Z 轴旋转角度，单位是度。围绕绑定关节转动；躯干会旋转整个模型。" : first.id.includes("offset") ? "依次为 X 左右、Y 上下、Z 前后位移，单位为皮肤像素。随手臂动作保持绑定。" : first.id.includes("stretch") ? "依次为 X、Y、Z 三个轴的缩放倍率。1 为原大小，可分别修改以拉长或压扁物品。" : "依次为 X、Y、Z 轴旋转角度，单位是度；调整物品相对于手的方向。";
+    for (const input of inputs) input.title = text;
+    row.querySelector("span").title = text;
+  }
+  for (const label of document.querySelectorAll("label.parameter-help")) {
+    const text = [...label.childNodes].find((node) => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+    const caption = text ? document.createElement("span") : label.querySelector("span");
+    if (text) { caption.textContent = text.textContent; text.replaceWith(caption); }
+    caption.classList.add("parameter-name");
+    caption.title = label.title;
+    const icon = document.createElement("small"); icon.textContent = " ⓘ"; icon.setAttribute("aria-hidden", "true");
+    caption.append(icon);
+  }
+}
 const viewport = $("#viewport");
 const status = $("#status");
 const fileInput = $("#skin-file");
@@ -121,6 +183,10 @@ function showMode(mode) {
 /** 发送当前皮肤和参数，在后台生成后一次性替换雕像预览。 */
 async function generateStatue() {
   if (!skin || !palette || generating || editor?.busy || poseControls?.busy) return;
+  for (const input of matchingInputs) {
+    input.required = true;
+    if (!input.reportValidity()) return;
+  }
   generating = true;
   updateGenerateButton();
   $("#generate-statue").textContent = "正在生成…";
@@ -134,6 +200,7 @@ async function generateStatue() {
     overlay_offset: Number($("#statue-offset").value), alpha_threshold: Number($("#statue-alpha").value),
     smoothness: Number($("#statue-smoothness").value), excluded: excludedBlocks, layers,
     prefer_connected: $("#statue-connected").checked,
+    matching: matchingSettings(),
   };
   try {
     const form = new FormData();
@@ -179,8 +246,8 @@ async function displayStatue(result) {
   $("#statue-state").textContent = result.edits?.length ? `已编辑 ${result.edits.length} 次` : "生成完成";
   $("#statue-report").hidden = false;
   $("#statue-statistics").textContent = `站立高度基准 ${result.base_height} 格；实际包围尺寸 ${result.dimensions.join(" × ")} 格\n${result.options.hollow ? "空心" : "实心"} · 方块 ${result.block_count.toLocaleString()} · 第二层 ${result.overlay_blocks.toLocaleString()}\n可见单格面 ${result.mesh.exposed_faces.toLocaleString()} → 合并矩形 ${result.mesh.quad_count.toLocaleString()}\n初次生成平均 / 最大 Lab 色差 ${result.matching.mean_color_error} / ${result.matching.max_color_error}；内部填充 ${result.matching.interior_block}`;
-  if (result.matching.method === "border-grain-ctm-v2") {
-    $("#statue-statistics").textContent += `\n匹配已考虑边框与颗粒；可用连接图材料 ${result.matching.ctm_available} 种，初次选用 ${result.matching.ctm_selected} 种`;
+  if (result.matching.method === "uniform-seam-ctm-v3" || result.matching.method === "border-grain-ctm-v2") {
+    $("#statue-statistics").textContent += `\n${result.matching.method === "uniform-seam-ctm-v3" ? "匹配已考虑颜色均匀度、平铺接缝与颗粒" : "匹配已考虑边框与颗粒"}；可用连接图材料 ${result.matching.ctm_available} 种，初次选用 ${result.matching.ctm_selected} 种`;
   }
   $("#statue-materials").replaceChildren(...result.materials.map((material) => {
     const row = document.createElement("div");
@@ -275,6 +342,10 @@ async function restoreProject(payload) {
   if (!await importSkin(new File([blob], result.source.filename || "project-skin.png", { type: "image/png" }))) throw new Error("工程皮肤无法打开。");
   await showPalette({ palette: payload.palette });
   const settings = result.options;
+  for (const input of matchingInputs) {
+    const key = input.id.replace("matching-", "");
+    input.value = settings.matching?.[key] ?? matchingDefaults[key];
+  }
   const fields = { scale: "scale", detail: "detail", shell_thickness: "thickness", overlay_offset: "offset", alpha_threshold: "alpha", smoothness: "smoothness" };
   for (const [key, suffix] of Object.entries(fields)) {
     const input = $(`#statue-${suffix}`);
@@ -704,6 +775,10 @@ function bindUI() {
   $("#show-skin").addEventListener("click", () => showMode("skin"));
   $("#show-statue").addEventListener("click", () => showMode("statue"));
   document.querySelectorAll(".statue-settings select, .statue-settings input").forEach((input) => input.addEventListener("change", markStatueChanged));
+  $("#reset-matching").addEventListener("click", () => {
+    for (const input of matchingInputs) input.value = matchingDefaults[input.id.replace("matching-", "")];
+    markStatueChanged();
+  });
   $("#statue-connected").addEventListener("change", () => { updateGenerateButton(); window.dispatchEvent(new Event("connected-preference")); });
   window.addEventListener("palette-loaded", (event) => {
     palette = event.detail;
@@ -745,10 +820,11 @@ try {
     dragging:(value)=>{controls.enabled=!value;},
     pickables:()=>[...(player?.children || []),...(heldGroup?.children || [])],
   });
+  initParameterHelp();
   void loadDemo();
 } catch (error) {
   status.textContent = "无法创建 3D 预览。";
   showNotice(`请使用启用硬件加速、支持 WebGL 2 的浏览器。${error.message}`, true);
 }
 
-initResourcePanel();
+initResourcePanel(() => ({ matching: matchingSettings(), smoothness: Number($("#statue-smoothness").value) }));

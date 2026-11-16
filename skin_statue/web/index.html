@@ -83,8 +83,18 @@
         <label class="setting-row">外层最小外凸（格）<input id="statue-offset" type="number" min="1" max="3" value="1"></label>
         <p class="hint">外层随模型比例放大：头部每侧 0.5 皮肤像素，其余部位 0.25；此处设置最小外凸量。保留耳朵等轮廓请选择完整细节。</p>
         <label class="setting-row">外层 Alpha 阈值<input id="statue-alpha" type="number" min="1" max="255" value="128"></label>
-        <label class="setting-row">匹配策略<select id="statue-smoothness"><option value="0">颜色优先</option><option value="0.2" selected>平衡</option><option value="0.7">平滑优先</option></select></label>
+        <label class="setting-row">匹配策略<select id="statue-smoothness"><option value="0">颜色优先</option><option value="0.2" selected>平衡</option><option value="0.7">均匀平滑优先</option></select></label>
         <label class="setting-row"><span>优先连接纹理</span><input id="statue-connected" type="checkbox"></label>
+        <details class="matching-controls">
+          <summary>调整选材算法</summary>
+          <label class="setting-row">颜色均匀偏好<input id="matching-uniformity" type="number" min="0" max="10" step="0.25" value="3"></label>
+          <label class="setting-row">边框与接缝抑制<input id="matching-border" type="number" min="0" max="10" step="0.25" value="3"></label>
+          <label class="setting-row">颗粒抑制<input id="matching-grain" type="number" min="0" max="10" step="0.25" value="0.75"></label>
+          <label class="setting-row">连接纹理偏好强度<input id="matching-connection" type="number" min="0" max="3" step="0.1" value="0.5"></label>
+          <label class="setting-row">允许增加色差<input id="matching-color_tolerance" type="number" min="0" max="30" step="1" value="10"></label>
+          <button id="reset-matching" type="button">恢复算法默认值</button>
+          <p class="hint">颜色仍不够均匀时，提高前两项；若平滑材料颜色差得较远，可适当提高允许色差。修改后重新生成才应用。</p>
+        </details>
         <p class="hint">启用后在相近色差内优先 CTM 候选，游戏端按邻接连接；预览可按已载入的连接图显示邻接效果。重力方块始终排除。</p>
         <button id="generate-statue" class="primary-button" disabled>生成雕像预览</button>
         <p class="hint">按上方勾选的身体部位和图层生成。修改后点击重新生成。主体高度不含外凸第二层。</p>

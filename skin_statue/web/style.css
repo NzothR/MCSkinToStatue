@@ -203,3 +203,8 @@ h1 { font-size: 22px; font-weight: 450; letter-spacing: 2px; margin: 8px 0 0; }
 .joint-angle-row { grid-template-columns: 38px repeat(3, minmax(0,1fr)); }
 .joint-angle-actions { grid-column: 2 / -1; display: flex; justify-content: flex-end; gap: 6px; }
 .joint-angle-row button { padding: 5px 2px; font-size: 10px; }
+.parameter-name { cursor: help; text-decoration: underline dotted; text-underline-offset: 3px; }
+.parameter-name small { color: var(--accent); }
+.matching-controls { margin-top: 16px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.matching-controls summary { cursor: pointer; font-size: 12px; color: var(--accent); }
+.matching-controls button { margin-top: 12px; font-size: 11px; }

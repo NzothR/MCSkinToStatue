@@ -9,6 +9,34 @@ import numpy as np
 from PIL import Image, ImageStat, UnidentifiedImageError
 
 FACES = ("east", "west", "up", "down", "south", "north")
+DEFAULT_MATCHING = {
+    "uniformity": 3.0,
+    "border": 3.0,
+    "grain": 0.75,
+    "connection": 0.5,
+    "color_tolerance": 10.0,
+}
+
+
+def pixel_labs(rgb):
+    """批量转换采样像素，保留暗色纹理里肉眼可见的明暗差异。"""
+    linear = np.where(rgb <= 10.31475, rgb / 3294.6, ((rgb / 255 + 0.055) / 1.055) ** 2.4)
+    xyz = (
+        linear
+        @ np.array(
+            [
+                [0.4124564, 0.2126729, 0.0193339],
+                [0.3575761, 0.7151522, 0.119192],
+                [0.1804375, 0.072175, 0.9503041],
+            ]
+        )
+        / [0.95047, 1, 1.08883]
+    )
+    f = np.where(xyz > 216 / 24389, np.cbrt(xyz), xyz * 841 / 108 + 4 / 29)
+    return np.stack(
+        (116 * f[..., 1] - 16, 500 * (f[..., 0] - f[..., 1]), 200 * (f[..., 1] - f[..., 2])),
+        axis=-1,
+    )
 
 
 def rgb_to_lab(rgb: tuple | list) -> tuple[float, float, float]:
@@ -57,6 +85,23 @@ def analyze_image(image: Image.Image) -> dict:
         )
 
     border_contrast = np.linalg.norm(np.array(rgb_to_lab(mean(border))) - rgb_to_lab(mean(~border)))
+    labs = pixel_labs(pixels[..., :3])
+    weights = pixels[..., 3]
+    mean_lab = np.average(labs, axis=(0, 1), weights=weights) if weights.sum() else np.zeros(3)
+    uniformity = (
+        sqrt(float(np.average(((labs - mean_lab) ** 2).sum(axis=2), weights=weights)))
+        if weights.sum()
+        else 0
+    )
+    seams = []
+    for axis in (0, 1):
+        first, last = np.take(labs, 0, axis=axis), np.take(labs, -1, axis=axis)
+        valid = np.minimum(np.take(weights, 0, axis=axis), np.take(weights, -1, axis=axis))
+        seams.append(
+            float(np.average(np.linalg.norm(first - last, axis=1), weights=valid))
+            if valid.sum()
+            else 0
+        )
     # 只统计两端都可见的相邻像素，透明区域不制造假边缘。
     gradients = []
     for axis in (0, 1):
@@ -74,17 +119,25 @@ def analyze_image(image: Image.Image) -> dict:
         "variance": round(sum(stats.var) / 3, 3) if visible else 0,
         "border_contrast": round(float(border_contrast), 4),
         "grain": round(sum(gradients) / 5.1, 4),
+        "uniformity": round(uniformity, 4),
+        "seam": round(max(seams), 4),
         "opaque": histogram[255] == total,
         "transparent_fraction": round((total - histogram[255]) / total, 6),
     }
 
 
-def matching_cost(raw, penalty, connection, smoothness: float, prefer_connected: bool):
+def matching_cost(raw, penalty, connection, smoothness: float, prefer_connected: bool, tuning=None):
     """限定可牺牲色差，再以边框、颗粒和逐面连接能力排序；输入均为候选向量。"""
-    costs = raw + smoothness * penalty - (4 + 6 * smoothness) * connection
-    tolerance = 8 * smoothness + (4 if prefer_connected else 0)
+    tuning = tuning if tuning is not None else DEFAULT_MATCHING
+    costs = (
+        raw
+        + smoothness * penalty
+        - tuning["connection"] * (4 + 6 * smoothness) * connection * prefer_connected
+    )
+    tolerance = tuning["color_tolerance"]
     # 超出颜色预算的候选仍可手选，但排在预算内候选之后。
-    return np.where(raw <= raw.min() + tolerance, costs, 1000 + raw)
+    outside = max(1000, float(costs.max()) + 1)
+    return np.where(raw <= raw.min() + tolerance, costs, outside + raw)
 
 
 class Palette:
@@ -104,11 +157,12 @@ class Palette:
         self.items = []
         self._connected_profiles = {}
 
-    def face_profile(self, face: dict, prefer_connected: bool) -> tuple:
+    def face_profile(self, face: dict, prefer_connected: bool, tuning=None) -> tuple:
         """缓存实际连接图的完整连接区域；缺图时仅给予较弱的声明偏好。"""
         key = face["texture_id"]
         base = self.stats[key]
-        if "border_contrast" not in base:
+        tuning = tuning if tuning is not None else DEFAULT_MATCHING
+        if "seam" not in base:
             base = self.stats[key] = {"texture_id": key, **analyze_texture(self.textures[key])}
         strength = 0.35 if prefer_connected and face.get("connected_texture") else 0
         sheet = face.get("ctm_texture_id") if prefer_connected else None
@@ -127,21 +181,25 @@ class Palette:
                 # 主体平面以连接后的内部为主，保留边界的基础纹理影响。
                 blended = {
                     k: 0.8 * interior[k] + 0.2 * base[k]
-                    for k in ("variance", "border_contrast", "grain")
+                    for k in ("variance", "border_contrast", "grain", "uniformity", "seam")
                 }
                 rgb = 0.8 * np.array(interior["rgb"]) + 0.2 * np.array(base["rgb"])
                 self._connected_profiles[pair] = {**blended, "lab": rgb_to_lab(rgb)}
             base = self._connected_profiles[pair]
             strength = 1
         penalty = (
-            2 * sqrt(base["variance"]) / 2.55 + 1.5 * base["border_contrast"] + 0.75 * base["grain"]
+            tuning["uniformity"] * (sqrt(base["variance"]) / 2.55 + base["uniformity"])
+            + tuning["border"] * max(base["border_contrast"], base["seam"])
+            + tuning["grain"] * base["grain"]
         )
-        return base["lab"], penalty, strength
+        # CTM 只代表连接能力；有明显渐变或接缝的连接图会削弱奖励。
+        return base["lab"], penalty, strength / (1 + penalty / 4)
 
-    def matching_profiles(self, entries: list, prefer_connected: bool) -> tuple:
+    def matching_profiles(self, entries: list, prefer_connected: bool, tuning=None) -> tuple:
         """一次准备 P×6 的颜色、平滑惩罚与连接权重，供所有目标颜色复用。"""
         profiles = [
-            [self.face_profile(e["faces"][f], prefer_connected) for f in FACES] for e in entries
+            [self.face_profile(e["faces"][f], prefer_connected, tuning) for f in FACES]
+            for e in entries
         ]
         return tuple(
             np.asarray([[face[i] for face in entry] for entry in profiles], dtype=np.float32)
@@ -243,6 +301,7 @@ class Palette:
         smoothness: float = 0.2,
         excluded: set | None = None,
         prefer_connected: bool = False,
+        tuning: dict | None = None,
     ) -> dict:
         """按指定朝向，用 Lab 欧氏距离与纹理起伏寻找静态候选；复杂度 O(P)。"""
         target = np.asarray(rgb_to_lab(rgb))
@@ -251,7 +310,9 @@ class Palette:
 
         if not candidates:
             raise ValueError("调色板没有可用的静态完整方块候选。")
-        profiles = [self.face_profile(e["faces"][face], prefer_connected) for e in candidates]
+        profiles = [
+            self.face_profile(e["faces"][face], prefer_connected, tuning) for e in candidates
+        ]
         labs = np.asarray([p[0] for p in profiles])
         raw = np.linalg.norm(labs - target, axis=1)
         costs = matching_cost(
@@ -260,6 +321,7 @@ class Palette:
             np.array([p[2] for p in profiles]),
             smoothness,
             prefer_connected,
+            tuning,
         )
         best = int(costs.argmin())
         return {

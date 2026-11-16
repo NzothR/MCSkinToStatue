@@ -25,7 +25,7 @@ from skin_statue.core.editing import (
     rebuild,
     replace_material,
 )
-from skin_statue.core.palette import Palette
+from skin_statue.core.palette import DEFAULT_MATCHING, Palette
 from skin_statue.core.pose import pose_preview
 from skin_statue.core.schematic import PROFILES, export_bundle, placement, schematic_bytes
 from skin_statue.core.skin import PARTS, parse_skin
@@ -314,6 +314,16 @@ async def load_draft(identity: str) -> dict:
     return await run_in_threadpool(lambda: restore_project(files[identity].read_bytes()))
 
 
+class MatchingParameters(BaseModel):
+    """可调纹理偏好与相对最佳颜色的最大额外 CIE76 色差。"""
+
+    uniformity: float = Field(default=DEFAULT_MATCHING["uniformity"], ge=0, le=10)
+    border: float = Field(default=DEFAULT_MATCHING["border"], ge=0, le=10)
+    grain: float = Field(default=DEFAULT_MATCHING["grain"], ge=0, le=10)
+    connection: float = Field(default=DEFAULT_MATCHING["connection"], ge=0, le=3)
+    color_tolerance: float = Field(default=DEFAULT_MATCHING["color_tolerance"], ge=0, le=30)
+
+
 class StatueOptions(SceneOptions):
     """与实际体素分辨率关联的生成参数。"""
 
@@ -325,6 +335,7 @@ class StatueOptions(SceneOptions):
     overlay_offset: int = Field(default=1, ge=1, le=3)
     alpha_threshold: int = Field(default=128, ge=1, le=255)
     smoothness: float = Field(default=0.2, ge=0, le=1)
+    matching: MatchingParameters = Field(default_factory=MatchingParameters)
     prefer_connected: bool = False
     excluded: set[str] = Field(default_factory=set)
     layers: list[str]
@@ -460,6 +471,7 @@ class MatchRequest(BaseModel):
     rgb: tuple[int, int, int]
     face: Literal["east", "west", "up", "down", "south", "north"] = "south"
     smoothness: float = Field(default=0.2, ge=0, le=1)
+    matching: MatchingParameters = Field(default_factory=MatchingParameters)
     prefer_connected: bool = False
     excluded: set[str] = Field(default_factory=set)
 
@@ -721,6 +733,7 @@ def match_color(identity: str, request: MatchRequest) -> dict:
             request.smoothness,
             request.excluded,
             request.prefer_connected,
+            request.matching.model_dump(),
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc

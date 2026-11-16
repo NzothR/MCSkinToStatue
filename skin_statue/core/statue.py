@@ -110,7 +110,9 @@ def match_surface(occupied, targets, palette, options):
         (colors.reshape(-1, 18), np.packbits(flags, axis=1, bitorder="little")), axis=1
     )
     unique, inverse = np.unique(signatures, axis=0, return_inverse=True)
-    labs, penalty, connection = palette.matching_profiles(candidates, options["prefer_connected"])
+    labs, penalty, connection = palette.matching_profiles(
+        candidates, options["prefer_connected"], options.get("matching")
+    )
     selected = np.empty(len(unique), dtype=np.int32)
     errors = np.empty(len(unique), dtype=np.float32)
     maxima = np.empty(len(unique), dtype=np.float32)
@@ -127,6 +129,7 @@ def match_surface(occupied, targets, palette, options):
             (connection * weights).sum(axis=1) / weights.sum(),
             options["smoothness"],
             options["prefer_connected"],
+            options.get("matching"),
         )
         best = int(costs.argmin())
         selected[index] = best
@@ -147,7 +150,7 @@ def match_surface(occupied, targets, palette, options):
         candidates,
         {
             "unique_color_groups": len(unique),
-            "method": "border-grain-ctm-v2",
+            "method": "uniform-seam-ctm-v3",
             "ctm_available": sum(
                 any(f.get("ctm_texture_id") for f in e["faces"].values()) for e in candidates
             ),
