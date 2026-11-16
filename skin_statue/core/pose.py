@@ -87,9 +87,10 @@ def held_matrix(kind, rotate_around=False):
 
 
 def scene_objects(parsed, options):
-    """输出各部位和独立左右手物品的同源世界矩阵，作为预览及体素化输入。"""
+    """围绕固定的肩、髋、颈连接点构造绑定矩阵，预览与体素化共用。"""
     pose = options.get("pose", {})
-    torso = translation(0, 24, 0) @ rotation(pose.get("body", [0, 0, 0])) @ translation(0, -24, 0)
+    body_rotation = rotation(pose.get("body", [0, 0, 0]))
+    torso = translation(0, 24, 0) @ body_rotation @ translation(0, -24, 0)
     objects = []
     for part in parsed["parts"]:
         name = part["id"]
@@ -100,20 +101,18 @@ def scene_objects(parsed, options):
             if "arm" in name
             else [-2 if name.startswith("right") else 2, 12, 0]
         )
-        joint = (
-            torso
-            if name == "body"
-            else torso
-            @ translation(*pivot)
-            @ rotation(pose.get(name, [0, 0, 0]))
-            @ translation(*(-np.array(pivot)))
-        )
+        # 躯干对应整模根旋转；其余关节的父坐标系随整模旋转。
+        joint_frame = translation(*pivot) if name == "body" else torso @ translation(*pivot)
+        joint_rotation = body_rotation if name == "body" else rotation(pose.get(name, [0, 0, 0]))
+        joint = joint_frame @ joint_rotation @ translation(*(-np.array(pivot)))
         objects.append(
             {
                 "id": name,
                 "part": part,
                 "matrix": joint @ translation(*part["position"]),
                 "size": np.array(part["size"], dtype=float),
+                "joint_frame": joint_frame,
+                "joint_matrix": joint_rotation,
             }
         )
         hand = "right" if name == "right_arm" else "left" if name == "left_arm" else None
@@ -177,6 +176,8 @@ def scene_objects(parsed, options):
         obj["matrix"][1, 3] -= lowest
         if "edit_frame" in obj:
             obj["edit_frame"][1, 3] -= lowest
+        if "joint_frame" in obj:
+            obj["joint_frame"][1, 3] -= lowest
     LOGGER.debug(
         "Pose scene: rotations=%s held=%s floor_offset=%s",
         pose,
@@ -187,10 +188,15 @@ def scene_objects(parsed, options):
 
 
 def pose_preview(parsed, options):
-    """将统一矩阵和物品像素打包给浏览器，物品网格使用实例化绘制。"""
+    """打包世界矩阵、关节父坐标与局部旋转、持物编辑矩阵和像素。"""
     result = []
     for obj in scene_objects(parsed, options):
         row = {"id": obj["id"], "matrix": obj["matrix"].T.reshape(-1).tolist()}
+        if "joint_frame" in obj:
+            row.update(
+                joint_frame=obj["joint_frame"].T.reshape(-1).tolist(),
+                joint_matrix=obj["joint_matrix"].T.reshape(-1).tolist(),
+            )
         if "edit_frame" in obj:
             row.update(
                 edit_frame=obj["edit_frame"].T.reshape(-1).tolist(),

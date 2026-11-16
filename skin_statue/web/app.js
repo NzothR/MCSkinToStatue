@@ -209,6 +209,7 @@ function displayPose(data) {
   for (const mesh of player.children) {
     mesh.matrixAutoUpdate = false;
     mesh.matrix.fromArray(objects.get(mesh.userData.key.split(":")[0]).matrix);
+    mesh.userData.restMatrix = mesh.matrix.clone();
     mesh.matrixWorldNeedsUpdate = true;
   }
   if (heldGroup) {
@@ -400,7 +401,7 @@ function buildPlayer(parsed, map) {
       const index = layer === "overlay" ? 1 : 0;
       const mesh = new THREE.Mesh(geometry, standard[index]);
       mesh.position.set(...part.position);
-      mesh.userData = { key: `${part.id}:${layer}`, pixels: data.pixels, standard: standard[index], flat: flat[index] };
+      mesh.userData = { key: `${part.id}:${layer}`, part:part.id, pixels: data.pixels, standard: standard[index], flat: flat[index] };
       // 外层最后渲染，完全透明像素不会写入深度缓冲。
       mesh.renderOrder = index;
       group.add(mesh);
@@ -733,6 +734,7 @@ try {
   heldEditor = initHeldEditor({
     scene,camera,canvas:renderer.domElement,mode:()=>previewMode,
     item:(hand)=>poseControls.getHeld(hand),change:(hand,values)=>poseControls.transformHeld(hand,values),
+    joint:(part)=>poseControls.getJoint(part),rotateJoint:(part,angles)=>poseControls.rotateJoint(part,angles),
     notify:showNotice,showSkin:()=>{showMode("skin");controls.autoRotate=false;$("#auto-rotate").checked=false;},
     dragging:(value)=>{controls.enabled=!value;},
     pickables:()=>[...(player?.children || []),...(heldGroup?.children || [])],

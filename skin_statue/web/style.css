@@ -200,3 +200,5 @@ h1 { font-size: 22px; font-weight: 450; letter-spacing: 2px; margin: 8px 0 0; }
 .held-transform-toolbar button { font-size: 11px; padding: 6px; }
 .held-transform-toolbar button.active { border-color: var(--accent); color: var(--accent); }
 .held-transform-toolbar label, .held-transform-toolbar > span { font-size: 10px; color: var(--muted); }
+.joint-angle-row { grid-template-columns: 38px repeat(3, minmax(0,1fr)) 36px; }
+.joint-angle-row button { padding: 5px 2px; font-size: 10px; }

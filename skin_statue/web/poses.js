@@ -58,7 +58,7 @@ export function initPoseControls(host) {
     for (const input of document.querySelectorAll("[data-pose-part]")) input.value = pose[input.dataset.posePart]?.[Number(input.dataset.axis)] ?? 0;
   }
   for (const [part, name] of Object.entries(PARTS)) {
-    const row = document.createElement("div"); row.className = "pose-angle-row";
+    const row = document.createElement("div"); row.className = "pose-angle-row joint-angle-row";
     const label = document.createElement("span"); label.textContent = name; row.append(label);
     for (let axis = 0; axis < 3; axis++) {
       const input = document.createElement("input"); input.type = "number"; input.min = -180; input.max = 180; input.step = "any"; input.required = true; input.value = 0;
@@ -71,6 +71,11 @@ export function initPoseControls(host) {
       input.addEventListener("change", () => input.reportValidity());
       row.append(input);
     }
+    const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "旋转";
+    edit.title = part === "body" ? "可视化旋转整个模型" : `可视化旋转${name}`;
+    edit.setAttribute("aria-label", edit.title);
+    edit.addEventListener("click",()=>window.dispatchEvent(new CustomEvent("edit-pose-joint",{detail:part})));
+    row.append(edit);
     $("#pose-angles").append(row);
   }
   $("#pose-preset").addEventListener("change", () => {
@@ -212,6 +217,12 @@ export function initPoseControls(host) {
       showHand(hand);changed();
     },
     getHeld(hand) { return held[hand] ? structuredClone(held[hand]) : null; },
+    /** 关节手柄和数字角度使用同一份静态姿势，保持生成与工程保存一致。 */
+    rotateJoint(part,angles) {
+      pose[part] = [...angles]; $("#pose-preset").value = "custom";
+      showAngles(); changed();
+    },
+    getJoint(part) { return [...(pose[part] || [0,0,0])]; },
     /** 旧工程没有姿势字段时按站立空手恢复，新工程保留两手 PNG。 */
     async restore(options) {
       sequence++; itemRequests.left++; itemRequests.right++;

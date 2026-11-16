@@ -51,7 +51,7 @@
         <select id="pose-preset" aria-label="盔甲架姿势"><option value="standing">标准站立</option><option value="custom">自定义角度</option></select>
         <p id="pose-status" class="hint" role="status"></p>
         <details><summary>调整各部位角度</summary><div id="pose-angles"></div></details>
-        <p class="hint">X / Y / Z 为关节旋转角度。调整立即作用于皮肤；生成雕像时使用当前姿势。</p>
+        <p class="hint">点击身体部位或角度旁的“旋转”按钮使用三环手柄。手臂绕肩、腿绕髋、头绕颈旋转；躯干控制整个模型。调整后重新生成雕像才生效。</p>
       </section>
       <section class="held-settings">
         <div class="section-heading"><h2>左右手持物</h2></div>
@@ -119,8 +119,8 @@
         <canvas id="viewer" aria-label="可旋转的 Minecraft 皮肤三维模型" tabindex="0"></canvas>
         <div id="held-transform-toolbar" class="held-transform-toolbar" hidden>
           <strong id="held-transform-name">物品编辑</strong>
-          <div><button data-item-transform="translate">位移</button><button data-item-transform="rotate">旋转</button><button data-item-transform="scale">缩放</button><label><input id="held-transform-uniform" type="checkbox" checked> 等比缩放</label><button id="held-transform-done">完成</button></div>
-          <span>拖动红 X／绿 Y／蓝 Z 手柄；位移使用世界轴，旋转和缩放使用握持点局部轴。</span>
+          <div><button data-item-transform="translate">位移</button><button data-item-transform="rotate">旋转</button><button data-item-transform="scale">缩放</button><label id="held-transform-scale-options"><input id="held-transform-uniform" type="checkbox" checked> 等比缩放</label><button id="held-transform-done">完成</button></div>
+          <span id="held-transform-hint">拖动红 X／绿 Y／蓝 Z 手柄；位移使用世界轴，旋转和缩放使用握持点局部轴。</span>
         </div>
         <div class="view-toolbar" aria-label="固定视角">
           <button data-view="front">正面</button><button data-view="back">背面</button><button data-view="left">左侧</button><button data-view="right">右侧</button><button data-view="top">顶部</button><span></span><button data-view="reset" title="重置相机和旋转">↺ 重置</button>
