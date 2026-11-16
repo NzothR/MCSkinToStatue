@@ -10,6 +10,9 @@ from skin_statue.resources.ctm import affected_by_ctm
 from skin_statue.resources.gravity import affected_by_gravity
 from skin_statue.resources.instance import InstanceResources
 
+# 上传和 ZIP 展开共用上限，支持大型 GTNH 物品索引。
+INDEX_SIZE_LIMIT = 10 * 1024**3
+
 COLORS = (
     "white",
     "orange",
@@ -131,8 +134,8 @@ def import_runtime_index(data: bytes) -> Palette:
     """直接读取索引 ZIP，无需解压；每个失败状态均保留诊断信息。"""
     try:
         with ZipFile(BytesIO(data)) as archive:
-            if sum(info.file_size for info in archive.infolist()) > 512 * 1024 * 1024:
-                raise ValueError("索引解压总大小超过 512 MB。")
+            if sum(info.file_size for info in archive.infolist()) > INDEX_SIZE_LIMIT:
+                raise ValueError("索引解压总大小超过 10 GiB。")
             root = json.loads(archive.read("registry.json"))
             if root.get("format") != "skin-statue-block-index" or root.get("schema_version") != 1:
                 raise ValueError("不支持的方块索引格式或版本。")

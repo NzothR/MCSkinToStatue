@@ -163,6 +163,7 @@ class Palette:
         self.context = {}
         self.items = []
         self.item_images = {}
+        self.item_search = {}
         self.item_loading = {
             "active": False,
             "processed": 0,

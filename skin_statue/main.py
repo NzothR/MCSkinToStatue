@@ -37,7 +37,7 @@ from skin_statue.preferences import INDEX, read_matching, remember_index, save_m
 from skin_statue.resources.instance import InstanceResources
 from skin_statue.resources.item_catalog import stop_item_imports
 from skin_statue.resources.java_skin import fetch_skin
-from skin_statue.resources.registry import import_runtime_index, vanilla_palette
+from skin_statue.resources.registry import INDEX_SIZE_LIMIT, import_runtime_index, vanilla_palette
 from skin_statue.resources.scene_resources import attach_connections, item_catalog, runtime_item
 
 WEB = Path(__file__).parent / "web"
@@ -490,7 +490,7 @@ def palette_items(
 ) -> dict:
     """按本地化名称、注册 ID、数字 ID 查找真实物品变体，分页控制浏览器开销。"""
     palette = get_palette(identity)
-    rows = list(search_items(list(palette.items), search))
+    rows = list(search_items(list(palette.items), search, palette.item_search))
     return {
         "items": [
             {
@@ -642,9 +642,9 @@ async def scan_instance(request: ScanRequest) -> dict:
 async def load_index(file: Annotated[UploadFile, File()]) -> dict:
     """读取游戏辅助模组导出的 ZIP，并计算逐面颜色。"""
     try:
-        data = await file.read(128 * 1024 * 1024 + 1)
-        if len(data) > 128 * 1024 * 1024:
-            raise HTTPException(413, "索引 ZIP 文件需不超过 128 MB。")
+        data = await file.read(INDEX_SIZE_LIMIT + 1)
+        if len(data) > INDEX_SIZE_LIMIT:
+            raise HTTPException(413, "索引 ZIP 文件需不超过 10 GiB。")
         try:
             palette = await run_in_threadpool(import_runtime_index, data)
         except (ValueError, OSError) as exc:
