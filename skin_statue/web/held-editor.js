@@ -34,6 +34,7 @@ export function initHeldEditor(host) {
     const joint = selectionKind === "joint";
     toolbar.querySelectorAll("[data-item-transform]").forEach((b)=>{b.hidden=joint && b.dataset.itemTransform!=="rotate";});
     document.querySelector("#held-transform-scale-options").hidden=joint;
+    document.querySelector("#joint-transform-reset").hidden=!joint;
     document.querySelector("#held-transform-hint").textContent=joint
       ? "拖动红 X／绿 Y／蓝 Z 旋转环；躯干旋转整个模型，手臂旋转会带动对应手持物品。"
       : "拖动红 X／绿 Y／蓝 Z 手柄；位移使用世界轴，旋转和缩放使用握持点局部轴。";
@@ -172,6 +173,7 @@ export function initHeldEditor(host) {
     setMode(selectionKind==="joint" ? "rotate" : b.dataset.itemTransform);
   }));
   document.querySelector("#held-transform-done").addEventListener("click", finish);
+  document.querySelector("#joint-transform-reset").addEventListener("click",()=>host.rotateJoint(selected,[0,0,0]));
   setMode("translate"); visible();
 
   return {

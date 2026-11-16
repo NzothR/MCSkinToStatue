@@ -124,6 +124,8 @@ python tools/export_item_map.py '导出的 block-index ZIP 路径' --output outp
 
 在皮肤预览点击头、左右臂、左右腿或躯干，或展开“调整各部位角度”点击对应的“旋转”按钮，即可选中关节。关节模式只显示三色旋转环，隐藏位移、缩放及等比选项。拖动后同步回填 XYZ 角度，姿势预设转为自定义；点击“完成”隐藏手柄。
 
+每个部位的角度输入下方提供“旋转”和“重置”按钮；“重置”把该部位 XYZ 归零到 `0,0,0`，其他部位的局部角度与物品设置保留。三维手柄工具栏也提供“重置关节”，作用于当前选中关节。躯干重置恢复整模初始朝向，四肢与头部仍保留各自角度，手持物品继续跟随手臂绑定。重置立即更新皮肤和手柄，已生成雕像仍需重新生成，结果可随工程保存。
+
 旋转围绕骨骼连接点，头部绕颈部、手臂绕肩部、腿绕髋部。基础层和第二层使用同一个关节变换，手持物品是对应手臂的子对象，旋转手臂时随手臂一起移动。关节保持固定父子绑定，不允许把旋转中心平移到部位网格中心。躯干手柄对应整个模型的根旋转，头、四肢及双手物品一起绕根节点旋转；其他关节的既有角度保留。
 
 坐标单位为皮肤像素：颈／整模根节点 `(0,24,0)`，左右肩 `(±5,22,0)`，左右髋 `(±2,12,0)`。关节父坐标与局部旋转由同一个 `/api/pose` 流程返回，前端用矩阵差量即时显示拖动，生成时复用同一套矩阵。服务器重新计算贴地高度时，拖动中对模型整体使用相同的父坐标补偿，避免所选部位和躯干出现暂时错位；松开后恢复统一的贴地位置。
@@ -353,3 +355,5 @@ Three.js 与 OrbitControls 使用 MIT 许可证，版本与资源来源见 [第�
 姿势角度参考 [Mojang Bedrock Samples](https://github.com/Mojang/bedrock-samples/blob/main/resource_pack/animations/armor_stand.animation.json)，仅提取静态关节角度。MyCTMLib 连接索引依据 [Textures](https://github.com/wohaopa/MyCTMLib/blob/master/src/main/java/com/github/wohaopa/MyCTMLib/Textures.java) 与 [CTMIconManager](https://github.com/wohaopa/MyCTMLib/blob/master/src/main/java/com/github/wohaopa/MyCTMLib/CTMIconManager.java)；MIT 许可保存在 `skin_statue/third_party/MyCTMLib-LICENSE.txt`。持物变换只读核对构建目录中的 Minecraft 1.7.10 客户端源码，未复制游戏贴图资产。
 
 旋转体素化按部位包围盒分片逆采样，时间与扫描体素数线性相关，目标颜色缓冲空间 O(V)，临时坐标按 Y 轴分片处理。CTM 邻接检查 O(V)，只对实际使用的连接组合生成预览图；物品 PNG 逐内容去重，名称映射保留真实变体和 NBT。资源批量读取期间复用 ZIP 目录，完成后关闭文件。
+
+单关节重置本次仅执行 JavaScript 语法和差异检查，未运行界面测试。请在多个部位均有非零角度时，分别使用角度面板与手柄栏的重置，核对仅目标关节归零、其余局部角度和装备设置保留。此更新仅涉及前端，保存工程后刷新页面即可加载，无需重启服务或更新辅助模组。
