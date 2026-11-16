@@ -33,8 +33,8 @@ h2 { font-size: 13px; font-weight: 600; margin: 0; letter-spacing: 1px; }
 .upload-icon { font-size: 26px; line-height: 1; color: var(--accent); }
 .file-info { color: #b3c5c8; font-size: 11px; margin-top: 12px; overflow-wrap: anywhere; line-height: 1.6; }
 .segmented { display: flex; background: #101a20; border: 1px solid var(--line); border-radius: 7px; padding: 3px; gap: 3px; }
-.segmented label { flex: 1; cursor: pointer; }
-.segmented input { position: absolute; opacity: 0; }
+.segmented label { flex: 1; cursor: pointer; position: relative; min-width: 0; }
+.segmented input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
 .segmented span { display: block; text-align: center; border-radius: 4px; padding: 9px 0; color: #8599a0; }
 .segmented small { font-size: 10px; display: block; margin-top: 3px; }
 .segmented input:checked + span { background: #30413f; color: #b7f0d3; }
@@ -183,8 +183,10 @@ h1 { font-size: 22px; font-weight: 450; letter-spacing: 2px; margin: 8px 0 0; }
 }
 /* 页面左右两列分别滚动，滚动侧栏不会改变预览的位置。 */
 @media (min-width: 701px) {
-  html, body { height: 100%; overflow: hidden; }
-  .workspace { height: calc(100dvh - 78px); min-height: 0; overflow: hidden; }
+  /* clip 同时阻止隐藏 radio 获焦引发根页面程序滚动；两列承担全部桌面滚动。 */
+  html { height: 100%; overflow: clip; }
+  body { height: 100dvh; overflow: clip; display: grid; grid-template-rows: 78px minmax(0, 1fr); }
+  .workspace { height: 100%; min-height: 0; overflow: hidden; }
   .sidebar, .preview-panel { overflow-y: auto; min-height: 0; overscroll-behavior-y: contain; scrollbar-gutter: stable; }
 }
 .pose-angle-row { display: grid; grid-template-columns: 46px repeat(3, minmax(0,1fr)); gap: 4px; align-items: center; margin-top: 8px; font-size: 11px; }
@@ -222,5 +224,6 @@ h1 { font-size: 22px; font-weight: 450; letter-spacing: 2px; margin: 8px 0 0; }
 .held-hand-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .held-hand-heading label { display: flex; align-items: center; gap: 6px; margin: 0; }
 
-.scene-settings > .import-index { display: block; margin: 12px 0; text-align: center; }
 .scene-settings .setting-row > select, .scene-settings .setting-row > input { min-width: 0; width: 58%; }
+
+.username-form #import-username { flex-shrink: 0; white-space: nowrap; }

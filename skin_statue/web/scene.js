@@ -13,11 +13,12 @@ export function initSceneEditor(host) {
   function controls() {
     const locked = busy || host.busy();
     $("#generation-mode").disabled = locked;
+    $("#skin-file").multiple = mode() === "full";
     for (const input of document.querySelectorAll("[data-scene-transform], #scene-name")) input.disabled = locked;
     $("#scene-actor").replaceChildren(...actors.map((a) => new Option(a.name, a.id)));
     $("#scene-actor").value = activeId || "";
     $("#scene-actor").disabled = locked || mode() === "head";
-    for (const id of ["scene-files", "scene-duplicate"]) $(`#${id}`).disabled = locked || mode() === "head" || actors.length >= 32;
+    $("#scene-duplicate").disabled = locked || mode() === "head" || actors.length >= 32;
     $("#scene-move").disabled = locked || mode() === "head";
     $("#scene-remove").disabled = locked || mode() === "head" || actors.length < 2;
     const actor = active();
@@ -83,16 +84,27 @@ export function initSceneEditor(host) {
     const actor = { id: crypto.randomUUID(), name: original.name.slice(0,77) + " 副本", file: original.file, skin: original.skin, layers: [...original.layers], options: { ...structuredClone(original.options), placement: nextPosition() } };
     actors.push(actor); await activate(actor);
   }));
-  $("#scene-files").addEventListener("change", (event) => {
-    const files = [...event.target.files]; event.target.value = "";
-    if (files.length + actors.length > 32) { host.notify("一个场景最多放置 32 个人物。", true); return; }
-    void run(async () => {
-      for (const file of files) {
-        const actor = { id: crypto.randomUUID(), name: file.name.replace(/\.png$/i, "").slice(0,80), file, layers: null, options: { pose: {}, held: {}, placement: nextPosition(), scale_factor: 1 } };
-        remember(); actors.push(actor); await activate(actor); remember();
+  /** 本地、拖放和用户名共用入口：完整模式新增人物，头颅模式替换当前人物。 */
+  async function importSources(load) {
+    await run(async () => {
+      const sources = await load();
+      if (mode() === "head") {
+        if (sources.length !== 1) throw new Error("头颅模式一次只能导入一个皮肤。");
+        await host.replace(sources[0]); remember();
+        active().name = sources[0].file.name.replace(/\.png$/i, "").slice(0,80);
+      } else {
+        if (sources.length + actors.length > 32) throw new Error("一个场景最多放置 32 个人物。");
+        for (const source of sources) {
+          remember();
+          const actor = {id:crypto.randomUUID(),name:source.file.name.replace(/\.png$/i, "").slice(0,80),file:source.file,model:source.model,layers:null,
+            options:{pose:{},held:{},placement:actors.length ? nextPosition() : [0,0,0],scale_factor:1,
+              cape:{library:source.capes || [],selected:source.capes?.at(-1)?.id || null,enabled:true,angle:10}}};
+          actors.push(actor); await activate(actor); remember();
+        }
       }
+      host.frame();
     });
-  });
+  }
   $("#scene-remove").addEventListener("click", () => void run(async () => {
     const removed = active(); host.detach();
     actors = actors.filter((a) => a.id !== activeId); host.dispose(removed.render);
@@ -141,7 +153,8 @@ export function initSceneEditor(host) {
 
   return {
     get busy() { return busy; }, get headOnly() { return mode() === "head"; },
-    remember, tagActive, visible, meshes, reset, sync: controls,
+    remember, tagActive, visible, meshes, reset, sync: controls, importSources,
+    async changeModel() { await run(() => host.rebuildModel()); },
     document() {
       remember();
       return {mode: mode(), active_id: activeId, actors: actors.filter((a) => mode() === "full" || a.id === activeId).map((a) => ({id:a.id,name:a.name,image:a.skin.images.normalized,model:a.skin.model,layers:a.layers,...structuredClone(a.options)}))};

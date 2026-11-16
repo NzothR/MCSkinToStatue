@@ -742,16 +742,17 @@ function exportPNG() {
   }
 }
 
-/** 加载项目自带的原创双层示例皮肤，让界面打开即可查看模型。 */
-async function loadDemo() {
+/** 启动时加载示例；手动载入示例沿用当前模式的导入规则。 */
+async function loadDemo(initial = false) {
   const before = requestId;
   try {
     const response = await fetch("/static/demo.png");
     if (!response.ok) throw new Error("内置示例加载失败。");
     const blob = await response.blob();
     if (requestId !== before) return;
-    modelInputs[0].checked = true;
-    await importSkin(new File([blob], "studio-demo.png", { type: "image/png" }));
+    const file = new File([blob], "studio-demo.png", { type: "image/png" });
+    if(initial) { modelInputs[0].checked = true; await importSkin(file); }
+    else await sceneEditor.importSources(async()=>[{file,model:"steve"}]);
   } catch (error) {
     if (requestId === before) showNotice(error.message, true);
   }
@@ -785,24 +786,21 @@ function bindUI() {
     event.preventDefault();
     const button = $("#import-username");
     button.disabled = true;
-    button.textContent = "查询中…";
-    const before = requestId;
+    button.textContent = "导入中…";
     try {
-      const response = await fetch("/api/skin/username", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: $("#java-username").value.trim() }) });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.detail);
-      if (before !== requestId) return;
-      modelInputs.forEach((input) => { input.checked = input.value === result.model; input.disabled = false; });
-      const blob = await (await fetch(result.image)).blob();
-      await importSkin(new File([blob], `${result.username}.png`, { type: "image/png" }));
-      poseControls.addCapes(result.capes || []);
+      await sceneEditor.importSources(async()=>{
+        const response = await fetch("/api/skin/username", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: $("#java-username").value.trim() }) });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail);
+        const blob = await (await fetch(result.image)).blob();
+        return [{file:new File([blob], `${result.username}.png`, {type:"image/png"}),model:result.model,capes:result.capes || []}];
+      });
     } catch (error) { showNotice(error.message, true); }
-    finally { button.disabled = false; button.textContent = "查询皮肤"; }
+    finally { button.disabled = false; button.textContent = "导入皮肤"; }
   });
   fileInput.addEventListener("change", () => {
-    const file = fileInput.files[0];
-    if (file && !editor?.busy) void importSkin(file);
-    fileInput.value = "";
+    const files = [...fileInput.files]; fileInput.value = "";
+    if (files.length) void sceneEditor.importSources(async()=>files.map((file)=>({file})));
   });
   const dropzone = $("#dropzone");
   dropzone.addEventListener("keydown", (event) => {
@@ -815,14 +813,14 @@ function bindUI() {
   dropzone.addEventListener("drop", (event) => {
     event.preventDefault();
     dropzone.classList.remove("dragging");
-    const file = event.dataTransfer.files[0];
-    if (file && !editor?.busy) void importSkin(file);
+    const files = [...event.dataTransfer.files];
+    if (files.length) void sceneEditor.importSources(async()=>files.map((file)=>({file})));
   });
   // 阻止皮肤被拖到面板之外时触发浏览器跳转。
   window.addEventListener("dragover", (event) => event.preventDefault());
   window.addEventListener("drop", (event) => event.preventDefault());
   modelInputs.forEach((input) => input.addEventListener("change", () => {
-    if (currentFile) void importSkin(currentFile, true);
+    if (currentFile) void sceneEditor.changeModel();
   }));
   for (const layer of ["base", "overlay"]) {
     $(`#${layer}-visible`).addEventListener("change", (event) => {
@@ -935,6 +933,15 @@ try {
       if (actor.layers) for(const key of visibility.keys())visibility.set(key,actor.layers.includes(key));
       buildLayerControls(); await poseControls.restore(actor.options);updateAtlas();showMode("skin");
     },
+    async replace(source) {
+      if(source.model) modelInputs.forEach((input)=>{input.checked=input.value===source.model;input.disabled=false;});
+      if(!await importSkin(source.file))throw new Error("皮肤导入失败，请检查 PNG 文件。");
+      if(source.capes) {poseControls.addCapes(source.capes);await poseControls.apply();}
+    },
+    async rebuildModel() {
+      if(!await importSkin(currentFile,true))throw new Error("手臂模型切换失败。");
+    },
+    frame:()=>setView("reset"),
     dispose: disposeActor,
     flush: () => poseControls.apply(), clearGizmo: () => heldEditor.clearSelection(),
     busy: () => generating || loading || editor?.busy,
@@ -948,7 +955,7 @@ try {
     },
   });
   initParameterHelp();
-  void loadDemo();
+  void loadDemo(true);
 } catch (error) {
   status.textContent = "无法创建 3D 预览。";
   showNotice(`请使用启用硬件加速、支持 WebGL 2 的浏览器。${error.message}`, true);

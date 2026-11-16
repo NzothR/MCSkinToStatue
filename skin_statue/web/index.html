@@ -22,11 +22,11 @@
       <section>
         <div class="section-heading"><span class="step">01</span><h2>导入皮肤</h2><button id="demo" class="text-button">载入示例</button></div>
         <label class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="选择或拖入 PNG 皮肤">
-          <input type="file" id="skin-file" accept="image/png,.png" hidden>
+          <input type="file" id="skin-file" accept="image/png,.png" multiple hidden>
           <span class="upload-icon">↥</span><strong>选择或拖入皮肤</strong><span>64 × 64 或 64 × 32 · PNG</span>
         </label>
         <div id="file-info" class="file-info">尚未导入皮肤</div>
-        <form id="username-form" class="username-form"><label for="java-username">Java 正版用户名</label><div class="resource-actions"><input id="java-username" autocomplete="off" maxlength="16" pattern="[A-Za-z0-9_]{1,16}" placeholder="输入用户名" required><button id="import-username">查询皮肤</button></div></form>
+        <form id="username-form" class="username-form"><label for="java-username">Java 正版用户名</label><div class="resource-actions"><input id="java-username" autocomplete="off" maxlength="16" pattern="[A-Za-z0-9_]{1,16}" placeholder="输入用户名" required><button id="import-username">导入皮肤</button></div></form>
         <p class="hint">通过 Mojang 官方服务查询皮肤与当前披风，自动识别 Steve / Alex。披风可在下方列表切换。</p>
       </section>
       <section class="scene-settings">
@@ -34,9 +34,8 @@
         <label class="setting-row">生成模式<select id="generation-mode"><option value="full">完整人物 · 支持多人</option><option value="head">仅头颅 · 单人</option></select></label>
         <label class="setting-row">当前人物<select id="scene-actor" aria-label="当前编辑人物"></select></label>
         <label class="setting-row">人物名称<input id="scene-name" maxlength="80" value="人物"></label>
-        <label class="import-index">添加多个皮肤<input id="scene-files" type="file" accept="image/png,.png" multiple hidden></label>
         <div class="cape-actions"><button id="scene-duplicate">复制当前人物</button><button id="scene-remove">移除当前人物</button><button id="scene-move">平移当前人物</button></div>
-        <p class="hint">每个人物独立保存姿势、图层、披风和左右手物品。上方导入皮肤替换当前人物；点击其他人物可切换编辑。</p>
+        <p class="hint">每个人物独立保存姿势、图层、披风和左右手物品。完整模式导入皮肤会自动新增人物，本地文件可多选或拖入多张；头颅模式替换当前人物。点击其他人物可切换编辑。</p>
         <label class="setting-row" title="单位为皮肤像素，生成时乘生成倍率；X 左右、Y 上下、Z 前后。">位置 X<input id="scene-position-0" data-scene-transform type="number" min="-2048" max="2048" step="any" value="0" required></label>
         <label class="setting-row">位置 Y<input id="scene-position-1" data-scene-transform type="number" min="-2048" max="2048" step="any" value="0" required></label>
         <label class="setting-row">位置 Z<input id="scene-position-2" data-scene-transform type="number" min="-2048" max="2048" step="any" value="0" required></label>
