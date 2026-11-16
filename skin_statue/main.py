@@ -12,7 +12,7 @@ from typing import Annotated, Literal
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
@@ -470,9 +470,33 @@ def get_palette(identity: str) -> Palette:
 
 
 @app.get("/")
-def index() -> FileResponse:
-    """打开本地预览界面。"""
-    return FileResponse(WEB / "index.html")
+def index() -> HTMLResponse:
+    """用同一内容版本发布入口、样式和整个模块图，避免新页面加载旧缓存脚本。"""
+    assets = sorted(path for path in WEB.rglob("*") if path.suffix in {".js", ".css"})
+    digest = hashlib.sha256()
+    for path in assets:
+        digest.update(path.relative_to(WEB).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    version = digest.hexdigest()[:20]
+    imports = {
+        "/static/" + path.relative_to(WEB).as_posix(): "/static/"
+        + path.relative_to(WEB).as_posix()
+        + "?v="
+        + version
+        for path in assets
+        if path.suffix == ".js"
+    }
+    imports["three"] = imports["/static/vendor/three.module.min.js"]
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    html = html.replace(
+        '<script type="importmap">{"imports":{"three":"/static/vendor/three.module.min.js"}}</script>',
+        '<script type="importmap">' + json.dumps({"imports": imports}) + "</script>",
+    )
+    html = html.replace('href="/static/style.css"', f'href="/static/style.css?v={version}"')
+    html = html.replace('src="/static/app.js"', f'src="/static/app.js?v={version}"')
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/skin")

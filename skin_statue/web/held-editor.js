@@ -100,9 +100,14 @@ export function initHeldEditor(host) {
   }
   /** 关节仅开放旋转；“躯干”选择模型根节点而非局部身体网格。 */
   function selectJoint(part) {
-    if(!joints.has(part)) {host.notify("请先保存工程并重启本地服务，以加载关节编辑接口。",true);return;}
+    if(!joints.has(part)) {
+      const message="当前服务尚未加载关节接口，请先保存工程并重启本地工具。";
+      document.querySelector("#pose-status").textContent=message;
+      host.notify(message,true);return;
+    }
     host.showSkin();selected=part;selectionKind="joint";setMode("rotate");
     document.querySelector("#held-transform-name").textContent=`旋转${JOINTS[part]}`;
+    document.querySelector("#pose-status").textContent=`已选中${JOINTS[part]}，拖动三色旋转环调整角度。`;
     refreshSettings();control.attach(proxy);visible();
   }
   function finish() {
