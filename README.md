@@ -70,7 +70,7 @@ Three.js 0.170.0 和 OrbitControls 已随项目保存，运行时无需访问 CD
 
 每次成功导入运行时注册表与纹理 ZIP（包括项目索引、文件上传及 `--index`）后，将原包副本保存到项目 `.cache/preferences/runtime-index.zip`。下一次打开页面时自动读取此副本并重建调色板；移动原 ZIP 不影响恢复，重新导入会替换缓存。连接图仍按现有的实例资源加载流程提供，实例路径不自动保存。
 
-选材策略、优先连接纹理开关和五项算法参数在修改后自动保存到 `.cache/preferences/matching.json`，下次打开恢复。打开工程后使用的选材设置也会成为最近设置。随时点击“恢复算法默认值”，会恢复平衡策略、关闭连接优先并重置五项权重，同时保存默认值。界面显示保存结果，停止服务前等待已排队的设置写入。缓存不提交 Git。
+选材策略、优先连接纹理开关和六项算法参数在修改后自动保存到 `.cache/preferences/matching.json`，下次打开恢复。打开工程后使用的选材设置也会成为最近设置。随时点击“恢复算法默认值”，会恢复平衡策略、关闭连接优先并重置六项权重，同时保存默认值。界面显示保存结果，停止服务前等待已排队的设置写入。缓存不提交 Git。
 
 跨启动只恢复以上两项；皮肤、披风列表、姿势、尺寸、图层和其他设置通过明确打开工程／草稿来恢复。更新代码前请保存工程，再停止本地服务并重启。首次更新后重新导入一次 ZIP 即可建立索引缓存。
 
@@ -194,7 +194,7 @@ Modernity 等包的 CTM 规则会保留并按 `matchBlocks`、`matchTiles`、数
 
 ## 获取 GTNH 运行时索引
 
-辅助模组源码、安装和构建说明见 [block-exporter/README.md](block-exporter/README.md)。当前构建产物位于 `output/skinstatueindex-0.1.3.jar`。
+辅助模组源码、安装和构建说明见 [block-exporter/README.md](block-exporter/README.md)。当前构建产物位于 `output/skinstatueindex-0.1.4.jar`。
 
 1. 关闭游戏，把 JAR 放入 GTNH 2.9.0 客户端实例的 `.minecraft/mods/`，然后重新启动游戏。
 2. 选择实际使用的资源包并进入世界。默认等待 60 个客户端 tick 后自动导出一次；保持在世界中，完成后聊天栏显示完整路径。
@@ -243,8 +243,15 @@ Modernity 等包的 CTM 规则会保留并按 `matchBlocks`、`matchTiles`、数
 | 颗粒抑制 | 0.75／0～10 | 提高后更排斥密集细碎纹理 |
 | 连接纹理偏好强度 | 0.5／0～3 | 仅在勾选优先连接纹理时生效；0 关闭奖励但保留候选资格 |
 | 允许增加色差 | 10／0～30 | 相对最接近颜色的候选最多可额外增加的 CIE76 色差；提高可选范围，也可能偏色；0 仅选最接近颜色 |
+| 建筑材料优先强度 | 1／0～3 | 提高常用建筑和私人维度材料的优先级；0 关闭经济偏好 |
 
 超出色差预算的材料排到候选表后面（分数 1000 起），仍可手动选用。加载了实际连接图时，完整连接区域的颜色与纹理指标占 80%、基础图占 20%，按真实暴露面评分。报告显示可用连接图和初次选用材料数量；勾选偏好却没有连接图时提示先载入实例资源。连接图的内部若本身有明显花纹，游戏里仍会保留这些花纹。
+
+建筑材料分为三级：第一档是 GTNH 2.9.0 PersonalSpace 允许的分层／路网／边界／中心／间隙材料，以及羊毛、明确注册名的混凝土系列、Ztones（图中 Iszm／Sols 所属的装饰方块模组）；第二档是实际 `buildingBlocks` 创造分类、旧索引已知的原版建筑方块和 Chisel 建筑系列；第三档为其他材料。每下降一级增加 `12×建筑材料优先强度` 的代价，之后仍受相同色差预算约束，平滑和接缝惩罚仍生效。颜色优先策略只关闭纹理惩罚，经济偏好单独控制。此分类是材料偏好，不估算具体配方价格，也不扩大原有安全候选范围。
+
+内置清单对应 [GTNH 2.9.0 官方 personalspace.cfg](https://raw.githubusercontent.com/GTNewHorizons/GT-New-Horizons-Modpack/2.9.0/config/personalspace.cfg)，按真实 metadata 范围匹配，例如 `chisel:factoryblock2:0-3` 不会扩成全部变体。载入实例资源时只读其 `config/personalspace.cfg`，用实际允许清单覆盖默认清单，并随工程保存。基岩虽然出现在维度配置中，也不会提升为优先建筑材料。混凝土粉末仍按此前的重力规则排除。旧 ZIP 可直接使用；辅助模组 0.1.4 额外记录真实创造分类，重新导出后能识别更多分类，旧工程缺失的建筑偏好参数按默认值 1 处理。选中方块及候选卡片显示分类标签，API 同时返回分类来源。
+
+这些修改需要保存工作、停止服务并重启后重新生成。新模组位于 `output/skinstatueindex-0.1.4.jar`，替换游戏中的旧版 JAR 并重启游戏后再导出，安装步骤见辅助模组 README。披风导入入口采用独立块布局，旋转与重置／移除按钮使用带间距的网格，避免窄侧栏中按钮重叠。
 
 建议先选“均匀平滑优先”并使用默认细调值。还想减弱机械面板感时，提高颜色均匀偏好和接缝抑制；若纯色材料因偏色无法入选，再逐步提高允许增加色差。生成尺寸、壳厚、外层最小外凸、Alpha 阈值、匹配策略、连接预览以及持物参数也提供悬浮说明；例如 Alpha 阈值越低，越多半透明像素会生成方块。
 
@@ -312,6 +319,7 @@ skin_statue/core/statue.py  整数体素、多面匹配、空心处理、贪心�
 skin_statue/core/editing.py 候选排序、固定分组替换、自包含工程读写
 skin_statue/core/pose.py / posed_voxels.py 关节、披风、持握变换和旋转体素采样
 skin_statue/core/cape.py 官方披风图集解析
+skin_statue/core/building.py / building_materials.json 建筑材料归类、PersonalSpace 2.9.0 清单及实例规则
 skin_statue/preferences.py 项目内索引副本与白名单算法设置
 skin_statue/core/connected_preview.py MyCTMLib 邻接选片与预览材质
 skin_statue/core/schematic.py Alpha Schematic、扩展 ID、I 点偏移、读回校验和诊断 ZIP
@@ -341,7 +349,7 @@ node --check skin_statue/web/held-editor.js
 node --check skin_statue/web/vendor/TransformControls.js
 ```
 
-按项目 skill，当前开发执行构建和静态检查，不运行自动化或冒烟测试。皮肤双层预览、辅助模组导出、雕像预览和结构粘贴已由用户实际使用。本次新增功能未运行自动化、冒烟或游戏内容测试。本轮人工验收：左右区域分别滚动；在皮肤模式切换姿势并分别给两手装备物品，调整 XYZ 位移／旋转、缩放和厚度，确认旧雕像保持不变，重新生成后核对体素形状及结构粘贴；保存工程并重开，核对未生成的持物调整和原雕像分别保留；开关 CTM 预览，对照游戏的相邻及对角连接；用 0.1.3 模组重新导出并导入，核对模组物品变体、名称、数字 ID、多层染色和方块六面；测试结束点击“停止服务”，确认 Python 进程退出。
+按项目 skill，当前开发执行构建和静态检查，不运行自动化或冒烟测试。皮肤双层预览、辅助模组导出、雕像预览和结构粘贴已由用户实际使用。本次新增功能未运行自动化、冒烟或游戏内容测试。本轮重点验收：披风导入、旋转、重置与移除按钮无重叠；重新生成后优先使用羊毛、混凝土、Ztones 和私人维度允许材料，调整建筑优先强度并核对候选分类；其余功能验收：左右区域分别滚动；在皮肤模式切换姿势并分别给两手装备物品，调整 XYZ 位移／旋转、缩放和厚度，确认旧雕像保持不变，重新生成后核对体素形状及结构粘贴；保存工程并重开，核对未生成的持物调整和原雕像分别保留；开关 CTM 预览，对照游戏的相邻及对角连接；用 0.1.3 模组重新导出并导入，核对模组物品变体、名称、数字 ID、多层染色和方块六面；测试结束点击“停止服务”，确认 Python 进程退出。
 
 资源接口：
 
@@ -352,7 +360,7 @@ node --check skin_statue/web/vendor/TransformControls.js
 | `GET /api/palettes/{id}/entries` | `search`、`eligible_only`、`offset`、`limit` 查询 |
 | `GET /api/palettes/{id}/textures/{texture_id}` | 颜色计算使用的 PNG |
 | `GET /api/palettes/{id}/export` | 调色板及完整问题报告 JSON |
-| `POST /api/palettes/{id}/match` | JSON `rgb`、`face`、可选 `smoothness`、`excluded`、`prefer_connected` 和 `matching`（上表五项键为 `uniformity,border,grain,connection,color_tolerance`） |
+| `POST /api/palettes/{id}/match` | JSON `rgb`、`face`、可选 `smoothness`、`excluded`、`prefer_connected` 和 `matching`（上表六项键为 `uniformity,border,grain,connection,color_tolerance,building`） |
 | `GET /api/resources/local` | 列出项目根目录内的索引 ZIP |
 | `POST /api/resources/local/{filename}` | 直接载入项目索引 |
 | `GET /api/resources/loaded` | 返回当前已载入调色板的概要 |

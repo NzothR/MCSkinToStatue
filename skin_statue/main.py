@@ -241,6 +241,9 @@ async def candidates(identity: str, key: str, group: int = Query(ge=0)) -> dict:
                             "numeric_id",
                             "metadata",
                             "connected_texture",
+                            "building_rank",
+                            "building_label",
+                            "building_source",
                         )
                     },
                     "faces": {"south": row["entry"]["faces"]["south"]},
@@ -358,6 +361,7 @@ class MatchingParameters(BaseModel):
     grain: float = Field(default=DEFAULT_MATCHING["grain"], ge=0, le=10)
     connection: float = Field(default=DEFAULT_MATCHING["connection"], ge=0, le=3)
     color_tolerance: float = Field(default=DEFAULT_MATCHING["color_tolerance"], ge=0, le=30)
+    building: float = Field(default=DEFAULT_MATCHING["building"], ge=0, le=3)
 
 
 class StatueOptions(SceneOptions):

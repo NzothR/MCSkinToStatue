@@ -9,6 +9,7 @@ from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 import numpy as np
 
+from skin_statue.core.building import classify
 from skin_statue.core.connected_preview import preview_mesh
 from skin_statue.core.palette import FACES, Palette, analyze_texture, matching_cost, rgb_to_lab
 from skin_statue.core.skin import parse_skin
@@ -74,7 +75,7 @@ def ranked_candidates(
         raise ValueError("替换分组不存在。")
     options = statue.preview["options"]
     entries = palette.candidates(options["prefer_connected"], options["excluded"])
-    labs, penalty, connection = palette.matching_profiles(
+    labs, penalty, connection, building = palette.matching_profiles(
         entries, options["prefer_connected"], options.get("matching")
     )
     raw = np.zeros(len(entries))
@@ -106,6 +107,7 @@ def ranked_candidates(
         options["smoothness"],
         options["prefer_connected"],
         options.get("matching"),
+        building,
     )
     return [
         {"entry": entries[int(i)], "cost": round(float(scores[i]), 3)}
@@ -180,6 +182,7 @@ def project_bytes(statue: GeneratedStatue, palette: Palette) -> bytes:
             "resource_packs": palette.resource_packs,
             "context": palette.context,
             "registry_count": palette.registry_count,
+            "building_rules": palette.building_rules,
             "entries": list(entries.values()),
             "items": palette.items,
         },
@@ -208,6 +211,9 @@ def open_project(data: bytes) -> tuple[GeneratedStatue, Palette]:
             info = root["palette"]
             palette = Palette(info["source"], identity, info["resource_packs"])
             palette.entries = info["entries"]
+            palette.building_rules = info.get("building_rules", palette.building_rules)
+            for entry in palette.entries:
+                entry.update(classify(entry, palette.building_rules))
             palette.items = info.get("items", [])
             palette.context = info["context"]
             palette.registry_count = info["registry_count"]

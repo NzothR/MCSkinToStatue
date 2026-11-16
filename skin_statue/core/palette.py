@@ -8,6 +8,8 @@ from math import sqrt
 import numpy as np
 from PIL import Image, ImageStat, UnidentifiedImageError
 
+from skin_statue.core.building import DEFAULT_PDIM, classify
+
 FACES = ("east", "west", "up", "down", "south", "north")
 DEFAULT_MATCHING = {
     "uniformity": 3.0,
@@ -15,6 +17,7 @@ DEFAULT_MATCHING = {
     "grain": 0.75,
     "connection": 0.5,
     "color_tolerance": 10.0,
+    "building": 1.0,
 }
 
 
@@ -126,7 +129,9 @@ def analyze_image(image: Image.Image) -> dict:
     }
 
 
-def matching_cost(raw, penalty, connection, smoothness: float, prefer_connected: bool, tuning=None):
+def matching_cost(
+    raw, penalty, connection, smoothness: float, prefer_connected: bool, tuning=None, building=None
+):
     """限定可牺牲色差，再以边框、颗粒和逐面连接能力排序；输入均为候选向量。"""
     tuning = tuning if tuning is not None else DEFAULT_MATCHING
     costs = (
@@ -134,10 +139,12 @@ def matching_cost(raw, penalty, connection, smoothness: float, prefer_connected:
         + smoothness * penalty
         - tuning["connection"] * (4 + 6 * smoothness) * connection * prefer_connected
     )
+    if building is not None:
+        costs = costs + building
     tolerance = tuning["color_tolerance"]
     # 超出颜色预算的候选仍可手选，但排在预算内候选之后。
     outside = max(1000, float(costs.max()) + 1)
-    return np.where(raw <= raw.min() + tolerance, costs, outside + raw)
+    return np.where(raw <= raw.min() + tolerance, costs, outside + costs - costs.min())
 
 
 class Palette:
@@ -156,6 +163,7 @@ class Palette:
         self.context = {}
         self.items = []
         self._connected_profiles = {}
+        self.building_rules = DEFAULT_PDIM
 
     def face_profile(self, face: dict, prefer_connected: bool, tuning=None) -> tuple:
         """缓存实际连接图的完整连接区域；缺图时仅给予较弱的声明偏好。"""
@@ -201,9 +209,18 @@ class Palette:
             [self.face_profile(e["faces"][f], prefer_connected, tuning) for f in FACES]
             for e in entries
         ]
-        return tuple(
+        arrays = tuple(
             np.asarray([[face[i] for face in entry] for entry in profiles], dtype=np.float32)
             for i in range(3)
+        )
+        return (*arrays, self.building_penalties(entries, tuning))
+
+    def building_penalties(self, entries: list, tuning=None):
+        """每个建筑等级增加 12×偏好强度代价，颜色预算仍然单独生效。"""
+        strength = (tuning or DEFAULT_MATCHING).get("building", DEFAULT_MATCHING["building"])
+        return np.asarray(
+            [classify(e, self.building_rules)["building_rank"] * 12 * strength for e in entries],
+            dtype=np.float32,
         )
 
     def texture(self, data: bytes) -> dict:
@@ -264,8 +281,10 @@ class Palette:
                 "exclusions": list(dict.fromkeys(reasons)),
                 "status": state.get("status", "unresolved"),
                 "error": state.get("error"),
+                "creative_tab": state.get("creative_tab"),
             }
         )
+        self.entries[-1].update(classify(self.entries[-1], self.building_rules))
 
     def summary(self) -> dict:
         """返回适合界面展示的调色板统计。"""
@@ -322,6 +341,7 @@ class Palette:
             smoothness,
             prefer_connected,
             tuning,
+            self.building_penalties(candidates, tuning),
         )
         best = int(costs.argmin())
         return {

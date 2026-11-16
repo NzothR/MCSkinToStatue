@@ -53,13 +53,13 @@
         <details><summary>调整各部位角度</summary><div id="pose-angles"></div></details>
         <p class="hint">点击身体部位或角度旁的“旋转”按钮使用三环手柄。手臂绕肩、腿绕髋、头绕颈旋转；躯干控制整个模型。调整后重新生成雕像才生效。</p>
       </section>
-      <section class="held-settings">
+      <section class="cape-settings">
         <div class="section-heading"><h2>披风</h2></div>
         <select id="cape-list" aria-label="选择披风"><option value="">不佩戴披风</option></select>
         <label class="setting-row" title="临时隐藏披风，保留列表和旋转角度；重新生成后应用到雕像。">显示披风<input id="cape-enabled" type="checkbox" checked></label>
         <label class="import-index">导入披风 PNG（可多选）<input id="cape-file" type="file" accept="image/png,.png" multiple hidden></label>
         <label class="setting-row" title="绕肩背上沿的局部 Z 轴向后扬起，0 为垂直下垂，最大 120 度。其他轴、位移和缩放锁定。">上沿 Z 轴角度<input id="cape-angle" type="number" min="0" max="120" step="1" value="10"></label>
-        <button id="cape-edit" type="button">可视化旋转披风</button><button id="cape-reset" type="button">重置为 0°</button><button id="cape-remove" type="button">移除所选披风</button>
+        <div class="cape-actions"><button id="cape-edit" type="button">可视化旋转披风</button><button id="cape-reset" type="button">重置为 0°</button><button id="cape-remove" type="button">移除所选披风</button></div>
         <p id="cape-status" class="hint" role="status">用户名查询读取公开的当前披风。其他披风可切换官方佩戴后重新查询，或导入 64×32 图集；支持多张收集、单张佩戴，随工程保存。</p>
       </section>
       <section class="held-settings">
@@ -101,6 +101,7 @@
           <label class="setting-row">颗粒抑制<input id="matching-grain" type="number" min="0" max="10" step="0.25" value="0.75"></label>
           <label class="setting-row">连接纹理偏好强度<input id="matching-connection" type="number" min="0" max="3" step="0.1" value="0.5"></label>
           <label class="setting-row">允许增加色差<input id="matching-color_tolerance" type="number" min="0" max="30" step="1" value="10"></label>
+          <label class="setting-row">建筑材料优先强度<input id="matching-building" type="number" min="0" max="3" step="0.1" value="1"></label>
           <button id="reset-matching" type="button">恢复算法默认值</button>
           <p id="preferences-status" class="hint" role="status">启动时恢复选材设置。</p>
           <p class="hint">颜色仍不够均匀时，提高前两项；若平滑材料颜色差得较远，可适当提高允许色差。修改后重新生成才应用。</p>

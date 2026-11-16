@@ -201,7 +201,11 @@ def import_runtime_index(data: bytes) -> Palette:
                     palette.add_state(
                         block["registry_name"],
                         number,
-                        {**state, "gravity_affected": gravity},
+                        {
+                            **state,
+                            "gravity_affected": gravity,
+                            "creative_tab": block.get("creative_tab"),
+                        },
                         faces,
                         state_reasons,
                     )

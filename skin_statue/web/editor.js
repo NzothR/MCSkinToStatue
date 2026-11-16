@@ -48,7 +48,7 @@ export function initEditor(host) {
   function showSelection() {
     if (!selected) return;
     const e = selected.entry;
-    $("#selection-info").textContent = `${e.display_name || "本地化名称需重新导出索引（辅助模组 0.1.2）"}\n${e.registry_name} · ID ${e.numeric_id}:${e.metadata}\n固定分组 ${selected.count.toLocaleString()} 块 · 原始材料 ${selected.origin}\n局部坐标 ${selected.position.join(", ")}`;
+    $("#selection-info").textContent = `${e.display_name || "本地化名称需重新导出索引（辅助模组 0.1.2）"}\n${e.registry_name} · ID ${e.numeric_id}:${e.metadata}\n${e.building_label || "其他材料"}\n固定分组 ${selected.count.toLocaleString()} 块 · 原始材料 ${selected.origin}\n局部坐标 ${selected.position.join(", ")}`;
     $("#edit-tools").hidden = false;
     const data = host.state().data;
     const min = new THREE.Vector3(...selected.position.map((p, i) => (p + data.bounds[0][i]) / data.scale));
@@ -73,7 +73,7 @@ export function initEditor(host) {
     const label = document.createElement("span");
     label.textContent = entry.display_name || entry.registry_name;
     const detail = document.createElement("small");
-    detail.textContent = `${entry.key} · ID ${entry.numeric_id}:${entry.metadata}${cost === undefined ? "" : ` · 分数 ${cost}`}${entry.connected_texture ? " · CTM" : ""}`;
+    detail.textContent = `${entry.key} · ID ${entry.numeric_id}:${entry.metadata}${cost === undefined ? "" : ` · 分数 ${cost}`}${entry.connected_texture ? " · CTM" : ""} · ${entry.building_label || "其他材料"}`;
     label.append(detail);
     button.append(img, label);
     button.addEventListener("click", () => void apply(entry));

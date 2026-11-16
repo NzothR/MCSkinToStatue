@@ -247,6 +247,9 @@ final class ExportJob {
         if (item != null) {
             List items = new ArrayList();
             try {
+                // Keep the stable vanilla/custom tab label, independent of the selected language.
+                CreativeTabs tab = block.getCreativeTabToDisplayOn();
+                if (tab != null) blockJson.addProperty("creative_tab", tab.getTabLabel());
                 block.getSubBlocks(item, block.getCreativeTabToDisplayOn(), items);
                 for (Object value : items) {
                     if (value instanceof ItemStack) {
@@ -561,7 +564,7 @@ final class ExportJob {
         JsonObject root = new JsonObject();
         root.addProperty("format", "skin-statue-block-index");
         root.addProperty("schema_version", 1);
-        root.addProperty("exporter_version", "0.1.3");
+        root.addProperty("exporter_version", "0.1.4");
         root.addProperty("minecraft_version", "1.7.10");
         root.addProperty("language", Minecraft.getMinecraft().gameSettings.language);
         root.addProperty("capture_scope", "static_getIcon_resolved_atlas");

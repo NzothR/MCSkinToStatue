@@ -1,10 +1,10 @@
-# Skin Statue Index 0.1.3
+# Skin Statue Index 0.1.4
 
 用于 GTNH 2.9.0（Minecraft 1.7.10／Forge 10.13.4.1614）的客户端辅助模组。导出当前世界连接后的真实方块和物品注册表、数字 ID、Metadata／Damage 与 NBT 变体、本地化名称、六面静态图标、多层物品图标和已加载纹理，供本地工具建立调色板。
 
 ## 安装与导出
 
-构建产物：项目根目录 `output/skinstatueindex-0.1.3.jar`，或者本目录 `build/libs/skinstatueindex-0.1.3.jar`。安装发布 JAR；`-dev.jar` 和 `-sources.jar` 用于开发。更新时替换旧版 JAR，重启客户端。现有 0.1.0／0.1.1 索引仍能导入；方块本地化名称需要 0.1.2+，物品映射需要 0.1.3 重新导出。
+构建产物：项目根目录 `output/skinstatueindex-0.1.4.jar`，或者本目录 `build/libs/skinstatueindex-0.1.4.jar`。安装发布 JAR；`-dev.jar` 和 `-sources.jar` 用于开发。更新时替换旧版 JAR，重启客户端。现有 0.1.0／0.1.1 索引仍能导入；方块本地化名称需要 0.1.2+，物品映射需要 0.1.3 重新导出。
 
 关闭游戏，把发布 JAR 放入客户端 `.minecraft/mods/` 后重启。无需安装到服务器。选择你真正使用的资源包，进入世界后保持客户端运行；默认等待 60 个客户端 tick 后自动开始导出。任务按客户端 tick 分段执行，单次约 6 ms 工作预算，每个状态的纹理读取不可再拆分。
 
@@ -23,6 +23,10 @@
 | `/skinindex cancel` | 取消任务，移除该任务未完成的 `.zip.part` |
 
 离开世界、切换维度或重载资源时取消当前任务。稳定后重新执行 `/skinindex export`。完成后切换资源包不会改变旧 ZIP，需重新导出。发生解析问题时，清单保留状态、错误类型及阶段；详细堆栈可通过调试日志查看。
+
+## 0.1.4 建筑分类
+
+方块注册项新增可选 `creative_tab`，从游戏实际 `getCreativeTabToDisplayOn().getTabLabel()` 读取稳定标签，例如原版的 `buildingBlocks`，不使用本地化显示名猜分类。更新 JAR 后需要重启游戏并重新运行 `/skinindex export`，才会获得该字段。导出仍只读，不改变方块或世界。旧索引可继续按工具内置的 GTNH 2.9.0 PersonalSpace 清单、Ztones／Chisel 与原版已知建筑映射使用经济选材偏好。
 
 ## 0.1.3 物品映射
 

@@ -63,6 +63,7 @@ function initParameterHelp() {
     "matching-grain": "越高越排斥密集颗粒和细碎像素变化。受匹配策略强度控制；0 关闭此项。",
     "matching-connection": "只在勾选优先连接纹理时生效。越高越偏好连接方块；连接后仍有渐变或接缝的材料奖励会减弱。0 关闭奖励，但仍允许这些候选参与。",
     "matching-color_tolerance": "相对颜色最接近的候选，最多允许多出多少 Lab 色差来换取平滑效果。越大越容易选到平整材料，也越可能偏色；0 只允许最接近的颜色。",
+    "matching-building": "越高越优先私人维度允许材料、羊毛、混凝土和 Ztones 等建筑块；其次为普通建筑分类，再考虑其他材料。仍受允许色差约束；0 关闭经济偏好。粉末等重力块仍排除。",
     "preview-connected": "只改变当前预览的纹理拼接，不重新选材。需要加载实例实际使用的连接图；可与关闭时对比。",
     "statue-plain": "使用方块纹理的平均色显示，便于区分颜色匹配和纹理花纹问题；不改变导出方块。",
     "flat-color": "关闭预览的方向明暗，按纹理原色显示；不改变方块或皮肤文件。",
@@ -277,8 +278,8 @@ async function displayStatue(result) {
   $("#statue-state").textContent = result.edits?.length ? `已编辑 ${result.edits.length} 次` : "生成完成";
   $("#statue-report").hidden = false;
   $("#statue-statistics").textContent = `站立高度基准 ${result.base_height} 格；实际包围尺寸 ${result.dimensions.join(" × ")} 格\n${result.options.hollow ? "空心" : "实心"} · 方块 ${result.block_count.toLocaleString()} · 第二层 ${result.overlay_blocks.toLocaleString()}\n可见单格面 ${result.mesh.exposed_faces.toLocaleString()} → 合并矩形 ${result.mesh.quad_count.toLocaleString()}\n初次生成平均 / 最大 Lab 色差 ${result.matching.mean_color_error} / ${result.matching.max_color_error}；内部填充 ${result.matching.interior_block}`;
-  if (result.matching.method === "uniform-seam-ctm-v3" || result.matching.method === "border-grain-ctm-v2") {
-    $("#statue-statistics").textContent += `\n${result.matching.method === "uniform-seam-ctm-v3" ? "匹配已考虑颜色均匀度、平铺接缝与颗粒" : "匹配已考虑边框与颗粒"}；可用连接图材料 ${result.matching.ctm_available} 种，初次选用 ${result.matching.ctm_selected} 种`;
+  if (["uniform-building-v4", "uniform-seam-ctm-v3", "border-grain-ctm-v2"].includes(result.matching.method)) {
+    $("#statue-statistics").textContent += `\n${result.matching.method === "border-grain-ctm-v2" ? "匹配已考虑边框与颗粒" : "匹配已考虑颜色均匀度、平铺接缝与颗粒"}${result.matching.method === "uniform-building-v4" ? ` · 建筑材料优先强度 ${result.matching.building_preference}` : ""}；可用连接图材料 ${result.matching.ctm_available} 种，初次选用 ${result.matching.ctm_selected} 种`;
   }
   $("#statue-materials").replaceChildren(...result.materials.map((material) => {
     const row = document.createElement("div");

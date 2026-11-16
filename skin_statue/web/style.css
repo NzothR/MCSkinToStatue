@@ -208,3 +208,8 @@ h1 { font-size: 22px; font-weight: 450; letter-spacing: 2px; margin: 8px 0 0; }
 .matching-controls { margin-top: 16px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
 .matching-controls summary { cursor: pointer; font-size: 12px; color: var(--accent); }
 .matching-controls button { margin-top: 12px; font-size: 11px; }
+.cape-settings > select { display: block; width: 100%; }
+.cape-settings > .import-index { display: block; margin: 14px 0; text-align: center; }
+.cape-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.cape-actions #cape-edit { grid-column: 1 / -1; }
+.cape-actions button { width: 100%; min-width: 0; padding: 10px 6px; white-space: normal; }

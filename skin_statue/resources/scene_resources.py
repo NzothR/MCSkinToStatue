@@ -89,6 +89,9 @@ def item_catalog(resources):
 
 def attach_connections(palette, resources):
     """读取有效 .mcmeta 和 MyCTMLib 配置，附加连接图而不改变原基础颜色。"""
+    from skin_statue.core.building import load_instance_rules
+
+    load_instance_rules(palette, resources.root)
     config = resources.root / "config/MyCTMLib.cfg"
     configured = set()
     if config.is_file():
